@@ -1,9 +1,11 @@
 import type HlsType from "hls.js";
 import type { ErrorData } from "hls.js";
 import type { EventEmitter } from "./EventEmitter";
-import type { LumenError, LumenQualityLevel, LumenSource } from "../types";
+import type { LumenError, LumenQualityLevel, LumenSource, LumenSourceType } from "../types";
 import { RETRY_BACKOFF_MS, delay } from "../utils/retry";
 import { ResilientMp4Engine } from "./ResilientMp4Engine";
+import { containerLabel, probeContainer, type ContainerKind } from "./containers";
+import type { MatroskaRemuxEngine } from "../remux/MatroskaRemuxEngine";
 
 declare global {
   interface Window {
@@ -20,21 +22,28 @@ const MEDIA_ERR_NETWORK = 2;
 const MEDIA_ERR_DECODE = 3;
 const MEDIA_ERR_SRC_NOT_SUPPORTED = 4;
 
-const HLS_EXT = /\.m3u8($|\?)/i;
-const MP4_EXT = /\.mp4($|\?)/i;
-const WEBM_EXT = /\.webm($|\?)/i;
-const OGG_EXT = /\.og[gv]($|\?)/i;
+const EXTENSION_TYPES: Array<[RegExp, LumenSourceType]> = [
+  [/\.m3u8($|\?)/i, "hls"],
+  [/\.webm($|\?)/i, "webm"],
+  [/\.og[gv]($|\?)/i, "ogg"],
+  [/\.mp4($|\?)/i, "mp4"],
+  [/\.m4v($|\?)/i, "mp4"],
+  [/\.mov($|\?)/i, "mov"],
+  [/\.qt($|\?)/i, "mov"],
+  [/\.mkv($|\?)/i, "mkv"],
+  [/\.mka($|\?)/i, "mkv"],
+  [/\.(ts|m2ts|mts)($|\?)/i, "ts"],
+];
 
-function detectType(source: LumenSource): "hls" | "mp4" | "webm" | "ogg" | "auto" {
+function detectType(source: LumenSource): LumenSourceType {
   if (source.type && source.type !== "auto") return source.type;
-  if (HLS_EXT.test(source.src)) return "hls";
-  if (WEBM_EXT.test(source.src)) return "webm";
-  if (OGG_EXT.test(source.src)) return "ogg";
-  if (MP4_EXT.test(source.src)) return "mp4";
+  for (const [pattern, type] of EXTENSION_TYPES) {
+    if (pattern.test(source.src)) return type;
+  }
   return "auto";
 }
 
-function mimeFor(type: string): string {
+function mimeFor(type: LumenSourceType): string {
   switch (type) {
     case "mp4":
       return "video/mp4";
@@ -46,6 +55,16 @@ function mimeFor(type: string): string {
       return "";
   }
 }
+
+/**
+ * Extensions we trust enough to skip byte-sniffing.
+ *
+ * Probing costs an extra round trip, so formats the browser plays natively
+ * take the fast path straight to the video element. Everything else —
+ * including anything with a misleading or missing extension — gets
+ * sniffed, because that's exactly where extensions can't be trusted.
+ */
+const NATIVE_FAST_PATH = new Set<LumenSourceType>(["hls", "mp4", "webm", "ogg"]);
 
 let hlsCtorPromise: Promise<typeof HlsType | null> | null = null;
 
@@ -92,7 +111,11 @@ export class PlaybackEngine {
   private _qualityLevels: LumenQualityLevel[] = [];
   private _isHls = false;
   private resilientEngine: ResilientMp4Engine | null = null;
+  private matroskaEngine: MatroskaRemuxEngine | null = null;
   private triedResilient = false;
+  private currentContainer: ContainerKind | null = null;
+  /** Incremented on every load() so a slow async probe can't apply to a newer source. */
+  private loadToken = 0;
   private boundOnVideoError = this.onVideoError.bind(this);
   private boundOnStalled = this.onStalled.bind(this);
   private boundOnPlaying = () => {
@@ -135,9 +158,12 @@ export class PlaybackEngine {
     this.currentSources = sources;
     this.teardownHls();
     this.teardownResilient();
+    this.teardownMatroska();
     this._qualityLevels = [];
     this.retryAttempt = 0;
     this.triedResilient = false;
+    this.currentContainer = null;
+    const token = ++this.loadToken;
 
     const best = this.pickBestSource(sources);
     if (!best) {
@@ -151,10 +177,98 @@ export class PlaybackEngine {
 
     if (type === "hls") {
       await this.loadHls(best.src);
-    } else {
-      this._isHls = false;
-      this.video.src = best.src;
+      return;
     }
+
+    this._isHls = false;
+
+    // Formats the browser handles natively go straight to the element —
+    // no probe, no extra request, byte-for-byte the old fast path.
+    if (NATIVE_FAST_PATH.has(type)) {
+      this.video.src = best.src;
+      return;
+    }
+
+    await this.loadByContainer(best.src, token);
+  }
+
+  /**
+   * Routes a non-native source by what its bytes actually say it is.
+   *
+   * Extensions and Content-Type headers are unreliable, so anything that
+   * isn't already known-native is sniffed and dispatched to the demuxer
+   * that can genuinely handle it.
+   */
+  private async loadByContainer(src: string, token: number): Promise<void> {
+    const container = await probeContainer(src);
+    if (this.destroyed || token !== this.loadToken) return;
+    this.currentContainer = container;
+
+    switch (container) {
+      case "matroska":
+        await this.loadMatroska(src, token);
+        return;
+
+      case "mpeg-ts":
+        await this.loadTransportStream(src);
+        return;
+
+      case "iso-bmff":
+      case "webm":
+      case "ogg":
+      case "unknown":
+        // Native first: MOV, oddly-branded MP4s and extension-less files
+        // very often play directly, and when they don't the existing
+        // error path falls through to the mp4box remuxer.
+        this.video.src = src;
+        return;
+
+      default:
+        this.emitFatal(
+          "CONTAINER_UNSUPPORTED",
+          `${containerLabel(container)} files can't be played in a browser. Converting this to MP4 or WebM will fix it.`,
+        );
+    }
+  }
+
+  /** Plays Matroska by remuxing to fragmented MP4 — no browser plays it directly. */
+  private async loadMatroska(src: string, token: number): Promise<void> {
+    const { MatroskaRemuxEngine } = await import("../remux/MatroskaRemuxEngine");
+    if (this.destroyed || token !== this.loadToken) return;
+
+    const engine = new MatroskaRemuxEngine(this.video, this.emitter);
+    this.matroskaEngine = engine;
+
+    const ok = await engine.attempt(src);
+    if (this.destroyed || token !== this.loadToken) return;
+    if (!ok) {
+      this.teardownMatroska();
+      this.emitFatal(
+        "CONTAINER_UNSUPPORTED",
+        "This Matroska file couldn't be played. Its video codec may not be supported by your browser.",
+      );
+    }
+  }
+
+  /**
+   * Plays a raw MPEG-TS through hls.js, which already contains a
+   * transport-stream transmuxer — handing it a one-entry playlist reuses
+   * that instead of duplicating a TS demuxer here.
+   */
+  private async loadTransportStream(src: string): Promise<void> {
+    const HlsCtor = await loadHlsCtor();
+    if (this.destroyed) return;
+
+    if (!HlsCtor || !HlsCtor.isSupported()) {
+      this.emitFatal(
+        "CONTAINER_UNSUPPORTED",
+        "Playing MPEG-TS files requires hls.js. Include it via a script tag or install it as a dependency.",
+      );
+      return;
+    }
+
+    const playlist = ["#EXTM3U", "#EXT-X-TARGETDURATION:10", "#EXTINF:10,", src, "#EXT-X-ENDLIST"].join("\n");
+    this.attachHls(HlsCtor, `data:application/vnd.apple.mpegurl;base64,${btoa(playlist)}`);
   }
 
   private pickBestSource(sources: LumenSource[]): LumenSource | undefined {
@@ -194,6 +308,11 @@ export class PlaybackEngine {
       return;
     }
 
+    this.attachHls(HlsCtor, src);
+  }
+
+  /** Creates an hls.js instance, wires its events, and points it at a manifest. */
+  private attachHls(HlsCtor: typeof HlsType, manifestUrl: string): void {
     this._isHls = true;
     const hls = new HlsCtor({
       enableWorker: true,
@@ -223,7 +342,7 @@ export class PlaybackEngine {
     });
 
     hls.attachMedia(this.video);
-    hls.loadSource(src);
+    hls.loadSource(manifestUrl);
   }
 
   private onHlsError(HlsCtor: typeof HlsType, data: ErrorData): void {
@@ -258,9 +377,11 @@ export class PlaybackEngine {
         break;
       case MEDIA_ERR_SRC_NOT_SUPPORTED:
         // A malformed/incomplete moov often surfaces as "not supported"
-        // immediately, with no retries in between — worth one resilient
-        // attempt before accepting that verdict for a progressive MP4.
-        if (!this._isHls && this.currentType === "mp4" && !this.triedResilient) {
+        // immediately, with no retries in between. It's also what a
+        // perfectly healthy MOV gets, since browsers reject the
+        // `video/quicktime` MIME while still being able to decode what's
+        // inside — so both cases are worth one remux attempt.
+        if (!this._isHls && this.canRemuxAsIsoBmff() && !this.triedResilient) {
           this.triedResilient = true;
           void this.tryResilientRecovery("SRC_NOT_SUPPORTED");
         } else {
@@ -312,9 +433,19 @@ export class PlaybackEngine {
     });
   }
 
-  /** Standard retries are exhausted. For a plain progressive MP4, make one last attempt via the mp4box.js/MSE fallback before giving up — see ResilientMp4Engine. */
+  /**
+   * True when the current source belongs to the ISO-BMFF family, which is
+   * what the mp4box.js remuxer understands. Covers MOV and other brands,
+   * not just files that happen to end in `.mp4`.
+   */
+  private canRemuxAsIsoBmff(): boolean {
+    if (this.currentContainer) return this.currentContainer === "iso-bmff";
+    return this.currentType === "mp4" || this.currentType === "mov";
+  }
+
+  /** Standard retries are exhausted. For ISO-BMFF sources, make one last attempt via the mp4box.js/MSE fallback before giving up — see ResilientMp4Engine. */
   private exhaustedRetries(code: LumenError["code"]): void {
-    const canTryResilient = !this._isHls && this.currentType === "mp4" && !this.triedResilient;
+    const canTryResilient = !this._isHls && this.canRemuxAsIsoBmff() && !this.triedResilient;
     if (!canTryResilient) {
       this.emitPermanentFailure(code);
       return;
@@ -324,7 +455,11 @@ export class PlaybackEngine {
   }
 
   private async tryResilientRecovery(code: LumenError["code"]): Promise<void> {
-    const src = this.currentSources.find((s) => detectType(s) === "mp4")?.src ?? this.currentSources[0]?.src;
+    const isIsoBmff = (source: LumenSource) => {
+      const type = detectType(source);
+      return type === "mp4" || type === "mov";
+    };
+    const src = this.currentSources.find(isIsoBmff)?.src ?? this.currentSources[0]?.src;
     if (!src) {
       this.emitPermanentFailure(code);
       return;
@@ -365,6 +500,11 @@ export class PlaybackEngine {
     this.resilientEngine = null;
   }
 
+  private teardownMatroska(): void {
+    this.matroskaEngine?.destroy();
+    this.matroskaEngine = null;
+  }
+
   destroy(): void {
     this.destroyed = true;
     this.video.removeEventListener("error", this.boundOnVideoError);
@@ -372,5 +512,6 @@ export class PlaybackEngine {
     this.video.removeEventListener("playing", this.boundOnPlaying);
     this.teardownHls();
     this.teardownResilient();
+    this.teardownMatroska();
   }
 }

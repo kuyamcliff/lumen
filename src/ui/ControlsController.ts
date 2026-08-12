@@ -388,6 +388,12 @@ export class ControlsController {
 
   private bindSubtitleEvents(): void {
     this.emitter.on("texttrackchange", () => this.refreshCaptionsButton());
+    // Subtitles found inside the media file itself (MKV) appear after
+    // playback starts, so the captions button has to re-evaluate then.
+    this.emitter.on("embeddedtexttrack", ({ track }) => {
+      this.refreshCaptionsButton();
+      this.announce(`Subtitles available: ${track.label || track.language}`);
+    });
     this.refreshCaptionsButton();
   }
 

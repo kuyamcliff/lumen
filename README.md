@@ -3,9 +3,10 @@
 **Beautiful. Simple. Unbreakable. Lightweight.**
 
 Lumen is a web-first, framework-agnostic video player built as a native
-Web Component. Drop in one tag, get HLS + progressive MP4/WebM playback, a
-premium default UI, deep subtitle customization, and a clean TypeScript API
-— with a core bundle under **17 kB gzipped**.
+Web Component. Drop in one tag and it plays **MP4, MOV, MKV, WebM, Ogg,
+MPEG-TS and HLS** — including formats no browser supports natively — with a
+premium default UI, deep subtitle customization, and a clean TypeScript API,
+from a core bundle under **19 kB gzipped**.
 
 ```html
 <script type="module" src="https://unpkg.com/@lumen/player/dist/lumen.js"></script>
@@ -32,10 +33,14 @@ import "@lumen/player";
 
 ## Why Lumen
 
-- **Tiny core.** ~16.5 kB gzipped with zero required runtime dependencies.
-  HLS support (`hls.js`) and the resilient-MP4 fallback (`mp4box`) are
-  optional, lazily-loaded layers — pages that don't need them never pay for
-  them.
+- **Plays what other players won't.** MKV, MOV and MPEG-TS are rejected by
+  every browser's `<video>` element. Lumen identifies a file by its bytes
+  and, where the container is the only obstacle, rebuilds it as fragmented
+  MP4 in JavaScript — no transcoding, no WASM decoder, no quality loss.
+- **Tiny core.** ~18.4 kB gzipped with zero required runtime dependencies.
+  HLS (`hls.js`), the corrupt-MP4 fallback (`mp4box`) and the Matroska
+  remuxer are optional, lazily-loaded layers — pages that don't need them
+  never pay for them.
 - **Beautiful by default.** A dark-first, premium control surface that needs
   zero configuration, plus a light theme and full CSS custom-property
   theming for everything else.
@@ -49,11 +54,65 @@ import "@lumen/player";
 - **A real Web Component.** Works from plain HTML/JS, and in React, Vue,
   Svelte, or anything else, without a wrapper.
 
+## Format support
+
+Lumen sniffs the first bytes of a file to identify its container, so a
+`.mkv` renamed to `.mp4`, or a signed CDN URL with no extension at all,
+still routes correctly. Extensions and `Content-Type` headers are hints,
+never the deciding factor.
+
+| Container | How it plays | Notes |
+| --- | --- | --- |
+| **MP4 / M4V** | Native | Fast path — no sniffing round trip |
+| **WebM** | Native | |
+| **Ogg / OGV** | Native | |
+| **HLS** (`.m3u8`) | Native on Safari, else `hls.js` | ABR + quality menu |
+| **MOV / QuickTime** | Native, else remuxed | Browsers reject the `video/quicktime` MIME even when they can decode the contents; Lumen remuxes rather than giving up |
+| **MKV / Matroska** | Remuxed to fragmented MP4 | No browser plays MKV natively. Embedded subtitles are extracted too |
+| **MPEG-TS** (`.ts`, `.m2ts`) | `hls.js` transmuxer | Reuses hls.js's TS support instead of duplicating a demuxer |
+| **Truncated / corrupt MP4** | `mp4box.js` + MSE | See [Resilience](#resilience) |
+| **AVI, WMV/ASF, FLV, MPEG-PS** | ❌ Detected, not played | Reported as `CONTAINER_UNSUPPORTED` with a message telling the viewer what to do, instead of a blank player |
+
+### Remuxing, and what limits it
+
+Playing a video needs two things: a **container** the player can parse, and
+**codecs** the browser can decode. Those fail independently, and conflating
+them is why players usually say nothing more useful than "format not
+supported".
+
+Containers are just packaging, so Lumen rebuilds them in JavaScript: an MKV
+is demuxed and rewritten as fragmented MP4 for Media Source Extensions,
+with the compressed frames copied across untouched. It's fast, lossless,
+and streams while downloading.
+
+Codecs are the hard limit. Lumen can't decode what the browser can't, so it
+asks (`MediaSource.isTypeSupported`) before committing and degrades in
+useful steps:
+
+| Source codec | Result |
+| --- | --- |
+| H.264, HEVC, VP9, AV1 video | Remuxed and played (subject to browser/OS support) |
+| AAC, Opus, FLAC, MP3 audio | Remuxed and played |
+| **AC-3, DTS, TrueHD audio** | Audio track dropped, **video still plays**, viewer told why |
+| Undecodable video codec | Clear message naming the fix, rather than a dead player |
+
+That AC-3 case matters more than it sounds: it's the single most common
+reason an MKV "won't play", and dropping one track beats refusing the file.
+
+Transcoding between codecs is deliberately out of scope — doing it in the
+browser means shipping a multi-megabyte WASM decoder, which would cost more
+than the rest of the player combined. For those files, convert server-side
+and use the `CONTAINER_UNSUPPORTED` error to prompt for it.
+
 ## Features
 
 | Area | Status |
 | --- | --- |
 | Native progressive MP4/WebM/Ogg playback | ✅ |
+| MKV/Matroska via built-in JS demuxer + fMP4 remuxer | ✅ (see [Format support](#format-support)) |
+| MOV/QuickTime and MPEG-TS | ✅ |
+| Container detection by magic bytes, not file extension | ✅ |
+| Embedded MKV subtitles (SRT-style and ASS/SSA) surfaced as text tracks | ✅ |
 | HLS (VOD + live) via `hls.js`, with native fallback on Safari/iOS | ✅ |
 | Automatic + manual quality selection | ✅ |
 | Playback rate control (0.25×–2×) | ✅ |
@@ -90,7 +149,7 @@ the browser can play it):
 ```
 
 See `examples/` for runnable pages: `basic.html`, `hls.html`,
-`subtitles.html`, `theming.html`, `resilience.html`. Run `npm run dev` and
+`subtitles.html`, `theming.html`, `formats.html`, `resilience.html`. Run `npm run dev` and
 open them from the printed local URL.
 
 > `resilience.html` needs a real H.264/AAC-capable browser (regular Chrome,
@@ -240,9 +299,20 @@ button — never a raw `MediaError`.
 ```
 src/
   core/
-    EventEmitter.ts       tiny typed pub/sub (internal + public `on`/`off`)
-    PlaybackEngine.ts      native / native-HLS / hls.js selection, ABR, retry
-    ResilientMp4Engine.ts  mp4box.js + MSE last-resort fallback for broken MP4s
+    EventEmitter.ts        tiny typed pub/sub (internal + public `on`/`off`)
+    containers.ts          magic-byte container sniffing
+    PlaybackEngine.ts      routing: native / hls.js / remux, ABR, retry
+    ResilientMp4Engine.ts  mp4box.js + MSE fallback for broken MP4s
+  remux/                   ← lazy-loaded; absent from the core bundle
+    MseSink.ts             shared MediaSource + SourceBuffer queueing
+    MatroskaRemuxEngine.ts MKV demux → fMP4 mux → MSE, track selection
+    matroska/
+      ebml.ts              EBML variable-length integers + element IDs
+      MatroskaDemuxer.ts   streaming Matroska parser
+    mp4/
+      boxes.ts             ISO-BMFF box-writing primitives
+      Mp4Muxer.ts          fMP4 init + media segment generation
+      sampleEntries.ts     codec → sample entry + RFC 6381 codec string
   subtitles/
     SubtitleManager.ts     track discovery, switching, styling, persistence
   ui/
@@ -253,6 +323,10 @@ src/
   LumenPlayer.ts            the <lumen-player> custom element + public API
   index.ts                  registers the element, re-exports types
 ```
+
+`src/remux/` is reached only through a dynamic `import()`, so it builds as
+a separate chunk and a page that never opens an MKV never downloads it.
+That's what keeps broad format support from taxing the size budget.
 
 Playback and UI are deliberately decoupled: `PlaybackEngine` and
 `SubtitleManager` know nothing about the DOM controls, and
@@ -289,6 +363,19 @@ Following the PRD's phase plan:
   matrix), and npm/CDN release automation are follow-up work.
 - **Phase 5 (not started):** playlists, chapters, casting, framework
   wrappers, DASH/DRM/ads as optional modules.
+
+Known gaps in the remux layer, listed plainly:
+
+- **Seeking within remuxed MKV** is limited to what's already buffered.
+  Random access would need Cues-index parsing plus ranged refetching.
+- **AVI, WMV/ASF, FLV, MPEG-PS** are detected but not demuxed. Their codecs
+  (DivX, WMV, VP6) are mostly undecodable in browsers anyway, so a demuxer
+  alone wouldn't make them play.
+- **VP9-in-MKV** synthesizes its `vpcC` from track metadata using profile 0
+  / 8-bit / 4:2:0 defaults, since Matroska usually stores no CodecPrivate
+  for VP9. Non-profile-0 VP9 (10-bit, 4:4:4) may be misdescribed.
+- **Bitmap subtitles** (VOBSUB, PGS) in MKV are skipped; only text-based
+  subtitle tracks become text tracks.
 
 ## License
 

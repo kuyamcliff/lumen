@@ -2,7 +2,7 @@
  * Public types for the Lumen player.
  */
 
-export type LumenSourceType = "hls" | "mp4" | "webm" | "ogg" | "auto";
+export type LumenSourceType = "hls" | "mp4" | "mov" | "mkv" | "webm" | "ogg" | "ts" | "auto";
 
 export interface LumenSource {
   src: string;
@@ -31,6 +31,8 @@ export type LumenErrorCode =
   | "NETWORK"
   | "DECODE"
   | "SRC_NOT_SUPPORTED"
+  /** The file's container format can't be played or remuxed in a browser. */
+  | "CONTAINER_UNSUPPORTED"
   | "MANIFEST_LOAD"
   | "ABORTED"
   | "UNKNOWN";
@@ -82,6 +84,8 @@ export type LumenEventMap = {
   qualitychange: { level: LumenQualityLevel | null; auto: boolean };
   qualitieschange: { levels: LumenQualityLevel[] };
   texttrackchange: { track: TextTrack | null };
+  /** A text track discovered inside the media file itself (e.g. MKV subtitles). */
+  embeddedtexttrack: { track: TextTrack };
   enterfullscreen: undefined;
   exitfullscreen: undefined;
   enterpip: undefined;
