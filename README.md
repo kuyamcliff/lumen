@@ -5,7 +5,7 @@
 Lumen is a web-first, framework-agnostic video player built as a native
 Web Component. Drop in one tag, get HLS + progressive MP4/WebM playback, a
 premium default UI, deep subtitle customization, and a clean TypeScript API
-— with a core bundle under **15 kB gzipped**.
+— with a core bundle under **17 kB gzipped**.
 
 ```html
 <script type="module" src="https://unpkg.com/@lumen/player/dist/lumen.js"></script>
@@ -32,9 +32,10 @@ import "@lumen/player";
 
 ## Why Lumen
 
-- **Tiny core.** ~15 kB gzipped with zero required runtime dependencies.
-  HLS support is an optional, lazily-loaded layer on top of `hls.js` — pages
-  that only need progressive MP4/WebM never pay for it.
+- **Tiny core.** ~16.5 kB gzipped with zero required runtime dependencies.
+  HLS support (`hls.js`) and the resilient-MP4 fallback (`mp4box`) are
+  optional, lazily-loaded layers — pages that don't need them never pay for
+  them.
 - **Beautiful by default.** A dark-first, premium control surface that needs
   zero configuration, plus a light theme and full CSS custom-property
   theming for everything else.
@@ -61,7 +62,8 @@ import "@lumen/player";
 | Auto-detected subtitles/captions, styling panel, persisted prefs | ✅ |
 | Scrub-bar preview (time tooltip; thumbnail sprite via WebVTT if provided) | ✅ |
 | CSS custom-property theming, dark/light/system themes | ✅ |
-| Network/decode error recovery with backoff, calm error UI | ✅ (see [Resilience](#resilience-todo)) |
+| Network/decode error recovery with backoff, calm error UI | ✅ (see [Resilience](#resilience)) |
+| Best-effort playback of truncated/corrupt progressive MP4s via `mp4box.js` + MSE | ✅ (see [Resilience](#resilience)) |
 | Chapters, playlists, multi-audio-track, casting | 🚧 not yet — tracked as v1.x |
 | DASH, DRM, ads | ⬜ intentionally out of scope for the MIT core (future optional modules) |
 
@@ -88,8 +90,19 @@ the browser can play it):
 ```
 
 See `examples/` for runnable pages: `basic.html`, `hls.html`,
-`subtitles.html`, `theming.html`. Run `npm run dev` and open them from the
-printed local URL.
+`subtitles.html`, `theming.html`, `resilience.html`. Run `npm run dev` and
+open them from the printed local URL.
+
+> `resilience.html` needs a real H.264/AAC-capable browser (regular Chrome,
+> Edge, Firefox, Safari). Minimal open-source Chromium builds — including
+> the one Playwright downloads by default — ship without licensed H.264/AAC
+> decoders, so `MediaSource.isTypeSupported()` correctly reports the codec
+> as unsupported there and the demo falls through to the calm error UI
+> instead of playing. That's the codec check working as intended, not a bug
+> in the fallback itself — see `test/ResilientMp4Engine.pipeline.test.ts`,
+> which exercises the real mp4box.js segmentation pipeline end-to-end
+> against a fake `MediaSource` to verify that independently of codec
+> support.
 
 ## JavaScript API
 
@@ -181,22 +194,46 @@ Cloudflare R2, Backblaze B2, and Bunny Storage/Stream all support this —
 enable CORS on the bucket/pull zone and Range requests come for free from
 the underlying object storage. If you set `crossorigin`, the player mirrors
 it onto the underlying `<video>` element (needed for canvas/WebGL post-
-processing or reading `TextTrack` cues cross-origin).
+processing or reading `TextTrack` cues cross-origin). The `mp4box.js`
+resilience fallback (see below) fetches the file itself via `fetch()`, so
+it needs the same CORS headers — no extra configuration beyond the above.
 
-## Resilience (TODO)
+## Resilience
 
-The current build layers a retry/backoff strategy on top of native
-`<video>` and `hls.js` error events: transient network errors reconnect
-automatically, decode errors trigger a reload-in-place at the same
-`currentTime`, and only genuinely fatal failures surface the calm error UI
-with a retry button — never a raw `MediaError`.
+Two layers, applied in order, before Lumen ever shows an error:
 
-True VLC-style resilience for **incomplete or corrupt** progressive MP4
-files (e.g. `moov` atom missing because an upload was interrupted) needs a
-`mp4box.js`-based demuxer feeding MSE directly, bypassing the browser's own
-(strict) MP4 parser. That's scoped as Phase 2 follow-up work — see
-[Roadmap](#roadmap) — and is the main gap between this build and the PRD's
-"unbreakable" bar.
+1. **Retry/backoff.** Native `<video>` and `hls.js` error events are
+   intercepted: transient network errors reconnect automatically, decode
+   errors trigger a reload-in-place at the same `currentTime`, with a
+   short backoff between attempts (500ms/1.5s/4s). This alone handles most
+   real-world blips — flaky wifi, a CDN hiccup, a mid-download server
+   restart.
+
+2. **`mp4box.js` + MSE fallback (progressive MP4 only).** If retries are
+   exhausted (or the browser rejects the file outright as
+   `SRC_NOT_SUPPORTED` — common when a `moov` atom is missing or truncated
+   because an upload was interrupted), Lumen makes one more attempt: it
+   streams the file itself via `fetch()`, feeds the bytes into
+   `mp4box.js` incrementally as they arrive, remuxes them into fragmented
+   MP4 segments, and appends those directly to a `MediaSource`
+   `SourceBuffer` — bypassing the browser's own (stricter) built-in MP4
+   parser entirely. Because mp4box.js processes boxes as they arrive, a
+   file that's truncated or has a broken tail still plays everything
+   before the break, instead of refusing to play at all.
+
+   This is a genuine, working fallback, not a stub — but it's honestly
+   scoped: MP4 only (mp4box.js doesn't handle WebM/Ogg), audio+video are
+   muxed into a single combined `SourceBuffer`, and seeking is clamped to
+   whatever's already buffered (arbitrary random-access seeking into
+   unbuffered regions would require re-fetching with a `Range` request at
+   a byte offset mp4box.js hasn't parsed yet — out of scope for this
+   pass). It also needs `mp4box` present the same way `hls.js` is: `npm
+   install mp4box` for bundler consumers, or `window.MP4Box` set manually
+   for plain-script-tag pages (mp4box.js doesn't ship a CDN-friendly UMD
+   global build the way hls.js does).
+
+Only if both layers fail does Lumen show the calm error UI with a retry
+button — never a raw `MediaError`.
 
 ## Architecture
 
@@ -205,6 +242,7 @@ src/
   core/
     EventEmitter.ts       tiny typed pub/sub (internal + public `on`/`off`)
     PlaybackEngine.ts      native / native-HLS / hls.js selection, ABR, retry
+    ResilientMp4Engine.ts  mp4box.js + MSE last-resort fallback for broken MP4s
   subtitles/
     SubtitleManager.ts     track discovery, switching, styling, persistence
   ui/
@@ -239,8 +277,10 @@ Following the PRD's phase plan:
 
 - **Phase 0–1 (this release):** project foundation, design tokens, native +
   HLS playback, responsive/keyboard-accessible controls. ✅
-- **Phase 2 (partial):** subtitle system is complete; `mp4box.js`-based
-  incomplete-MP4 resilience is not yet implemented (see above).
+- **Phase 2 (mostly done):** subtitle system is complete; incomplete/corrupt
+  MP4 resilience is implemented via `mp4box.js` + MSE (see
+  [Resilience](#resilience)) with documented limits (MP4 only, seeking
+  clamped to buffered ranges).
 - **Phase 3 (mostly done):** default theme, micro-interactions, loading/
   error states, a11y, mobile touch, scrub preview (thumbnails supported,
   sprite-sheet only).

@@ -3,12 +3,22 @@ import type { ErrorData } from "hls.js";
 import type { EventEmitter } from "./EventEmitter";
 import type { LumenError, LumenQualityLevel, LumenSource } from "../types";
 import { RETRY_BACKOFF_MS, delay } from "../utils/retry";
+import { ResilientMp4Engine } from "./ResilientMp4Engine";
 
 declare global {
   interface Window {
     Hls?: typeof HlsType;
   }
 }
+
+// WHATWG MediaError codes (https://html.spec.whatwg.org/#error-codes), used
+// as numeric literals rather than `MediaError.MEDIA_ERR_*` — the global
+// MediaError constructor isn't implemented in every environment that runs
+// this code (e.g. jsdom-based tests), even though the values themselves are
+// a stable part of the spec.
+const MEDIA_ERR_NETWORK = 2;
+const MEDIA_ERR_DECODE = 3;
+const MEDIA_ERR_SRC_NOT_SUPPORTED = 4;
 
 const HLS_EXT = /\.m3u8($|\?)/i;
 const MP4_EXT = /\.mp4($|\?)/i;
@@ -76,10 +86,13 @@ export class PlaybackEngine {
   private emitter: EventEmitter;
   private hls: HlsType | null = null;
   private currentSources: LumenSource[] = [];
+  private currentType: ReturnType<typeof detectType> | null = null;
   private retryAttempt = 0;
   private destroyed = false;
   private _qualityLevels: LumenQualityLevel[] = [];
   private _isHls = false;
+  private resilientEngine: ResilientMp4Engine | null = null;
+  private triedResilient = false;
   private boundOnVideoError = this.onVideoError.bind(this);
   private boundOnStalled = this.onStalled.bind(this);
   private boundOnPlaying = () => {
@@ -121,16 +134,20 @@ export class PlaybackEngine {
   async load(sources: LumenSource[]): Promise<void> {
     this.currentSources = sources;
     this.teardownHls();
+    this.teardownResilient();
     this._qualityLevels = [];
     this.retryAttempt = 0;
+    this.triedResilient = false;
 
     const best = this.pickBestSource(sources);
     if (!best) {
+      this.currentType = null;
       this.emitFatal("SRC_NOT_SUPPORTED", "No supported source was provided.");
       return;
     }
 
     const type = detectType(best);
+    this.currentType = type;
 
     if (type === "hls") {
       await this.loadHls(best.src);
@@ -233,14 +250,22 @@ export class PlaybackEngine {
     if (!error) return;
 
     switch (error.code) {
-      case MediaError.MEDIA_ERR_NETWORK:
+      case MEDIA_ERR_NETWORK:
         this.retryWithBackoff(() => this.reloadProgressive(), "NETWORK", "Reconnecting…");
         break;
-      case MediaError.MEDIA_ERR_DECODE:
+      case MEDIA_ERR_DECODE:
         this.retryWithBackoff(() => this.reloadProgressive(), "DECODE", "Recovering playback…");
         break;
-      case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
-        this.emitFatal("SRC_NOT_SUPPORTED", "This video format isn't supported by your browser.", error);
+      case MEDIA_ERR_SRC_NOT_SUPPORTED:
+        // A malformed/incomplete moov often surfaces as "not supported"
+        // immediately, with no retries in between — worth one resilient
+        // attempt before accepting that verdict for a progressive MP4.
+        if (!this._isHls && this.currentType === "mp4" && !this.triedResilient) {
+          this.triedResilient = true;
+          void this.tryResilientRecovery("SRC_NOT_SUPPORTED");
+        } else {
+          this.emitFatal("SRC_NOT_SUPPORTED", "This video format isn't supported by your browser.", error);
+        }
         break;
       default:
         this.emitFatal("UNKNOWN", "Playback stopped unexpectedly.", error);
@@ -273,10 +298,7 @@ export class PlaybackEngine {
   private retryWithBackoff(action: () => void, code: LumenError["code"], statusMessage: string): void {
     if (this.destroyed) return;
     if (this.retryAttempt >= RETRY_BACKOFF_MS.length) {
-      this.emitFatal(
-        code,
-        "This video couldn't finish loading. It may be incomplete or the connection is unstable.",
-      );
+      this.exhaustedRetries(code);
       return;
     }
 
@@ -290,6 +312,44 @@ export class PlaybackEngine {
     });
   }
 
+  /** Standard retries are exhausted. For a plain progressive MP4, make one last attempt via the mp4box.js/MSE fallback before giving up — see ResilientMp4Engine. */
+  private exhaustedRetries(code: LumenError["code"]): void {
+    const canTryResilient = !this._isHls && this.currentType === "mp4" && !this.triedResilient;
+    if (!canTryResilient) {
+      this.emitPermanentFailure(code);
+      return;
+    }
+    this.triedResilient = true;
+    void this.tryResilientRecovery(code);
+  }
+
+  private async tryResilientRecovery(code: LumenError["code"]): Promise<void> {
+    const src = this.currentSources.find((s) => detectType(s) === "mp4")?.src ?? this.currentSources[0]?.src;
+    if (!src) {
+      this.emitPermanentFailure(code);
+      return;
+    }
+
+    const engine = new ResilientMp4Engine(this.video, this.emitter);
+    this.resilientEngine = engine;
+    const recovered = await engine.attempt(src);
+    if (this.destroyed) return;
+
+    if (!recovered) {
+      this.resilientEngine = null;
+      this.emitPermanentFailure(code);
+    }
+    // On success, ResilientMp4Engine has already pointed the <video> at its
+    // own MediaSource; ordinary <video> events drive playback from here.
+  }
+
+  private emitPermanentFailure(code: LumenError["code"]): void {
+    this.emitFatal(
+      code,
+      "This video couldn't finish loading. It may be incomplete or the connection is unstable.",
+    );
+  }
+
   private emitFatal(code: LumenError["code"], message: string, raw?: unknown): void {
     this.emitter.emit("error", { code, message, fatal: true, raw });
   }
@@ -300,11 +360,17 @@ export class PlaybackEngine {
     this._isHls = false;
   }
 
+  private teardownResilient(): void {
+    this.resilientEngine?.destroy();
+    this.resilientEngine = null;
+  }
+
   destroy(): void {
     this.destroyed = true;
     this.video.removeEventListener("error", this.boundOnVideoError);
     this.video.removeEventListener("stalled", this.boundOnStalled);
     this.video.removeEventListener("playing", this.boundOnPlaying);
     this.teardownHls();
+    this.teardownResilient();
   }
 }

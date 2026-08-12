@@ -10,12 +10,13 @@ export default defineConfig({
       fileName: (format) => (format === "es" ? "lumen.js" : "lumen.umd.cjs"),
     },
     rollupOptions: {
-      // hls.js is optional and loaded dynamically at runtime — never bundled
-      // into the core, and never required for progressive/native playback.
-      external: ["hls.js"],
+      // hls.js and mp4box are optional and loaded dynamically at runtime —
+      // never bundled into the core, never required for basic playback.
+      external: ["hls.js", "mp4box"],
       output: {
         globals: {
           "hls.js": "Hls",
+          mp4box: "MP4Box",
         },
       },
     },
