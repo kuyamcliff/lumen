@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lumen — Theming</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <style>
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+      }
+      @media (max-width: 720px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      /* Full custom skin, applied purely through CSS custom properties —
+         no subclassing or shadow-piercing selectors needed. */
+      lumen-player.brand {
+        --lumen-color-accent: #7c5cff;
+        --lumen-color-accent-contrast: #ffffff;
+        --lumen-radius: 20px;
+        --lumen-font-family: "Georgia", serif;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Theming</h1>
+      <p>
+        Every visual token is a CSS custom property with a documented
+        fallback, so it can be overridden from page-level CSS without
+        touching the component's internals.
+      </p>
+
+      <div class="grid">
+        <section>
+          <h2>Dark (default)</h2>
+          <lumen-player
+            src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+            theme="dark"
+          ></lumen-player>
+        </section>
+        <section>
+          <h2>Light</h2>
+          <lumen-player
+            src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+            theme="light"
+          ></lumen-player>
+        </section>
+        <section>
+          <h2>Custom accent + radius + font</h2>
+          <lumen-player
+            class="brand"
+            src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+            theme="dark"
+          ></lumen-player>
+        </section>
+        <section>
+          <h2><code>theme="system"</code></h2>
+          <p>Follows the OS/browser color scheme (<code>prefers-color-scheme</code>).</p>
+          <lumen-player
+            src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+            theme="system"
+          ></lumen-player>
+        </section>
+      </div>
+    </main>
+
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>

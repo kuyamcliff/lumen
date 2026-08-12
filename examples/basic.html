@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lumen — Basic progressive MP4</title>
+    <link rel="stylesheet" href="./shared.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Basic usage</h1>
+      <p>
+        A single tag. No configuration. Works with any origin that serves
+        correct <code>Range</code> + CORS headers (see the README for
+        R2 / B2 / Bunny notes).
+      </p>
+
+      <lumen-player
+        src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+        poster="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/images/BigBuckBunny.jpg"
+      ></lumen-player>
+
+      <h2>Or via the JS API</h2>
+      <pre><code>const player = document.querySelector("lumen-player");
+player.on("play", () => console.log("playing!"));
+await player.load({ src: "video.mp4" });
+player.play();</code></pre>
+    </main>
+
+    <!-- Dev-server usage. In production: `npm install @lumen/player` and
+         `import "@lumen/player"`, or a single <script type="module"
+         src="https://unpkg.com/@lumen/player/dist/lumen.js"></script>. -->
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>
