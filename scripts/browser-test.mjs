@@ -62,8 +62,12 @@ if (!(await waitForServer(`${BASE}/index.html`))) {
   process.exit(1);
 }
 
+// LUMEN_CHROMIUM lets a machine with a browser Playwright didn't install
+// itself (a CI image with a pre-seeded Chromium, say) run this suite
+// without a second multi-hundred-megabyte download.
 const browser = await chromium.launch({
   args: ["--autoplay-policy=no-user-gesture-required", "--mute-audio"],
+  ...(process.env.LUMEN_CHROMIUM ? { executablePath: process.env.LUMEN_CHROMIUM } : {}),
 });
 
 try {
@@ -147,6 +151,76 @@ try {
       return { before, after: button() };
     });
     check("UI translates", labels.before === "Play" && labels.after === "Lecture", JSON.stringify(labels));
+    await page.close();
+  }
+
+  // --- shell details jsdom can't see -------------------------------------
+  console.log("\nShadow DOM shell:");
+  {
+    const page = await browser.newPage();
+    await page.goto(`${BASE}/basic.html`, { waitUntil: "domcontentloaded", timeout: 20000 });
+    await page.waitForTimeout(800);
+
+    const state = await page.evaluate(() => {
+      const player = document.querySelector("lumen-player");
+
+      // A slot is the only way light-DOM children (plugin overlays, ad
+      // containers) reach the screen at all.
+      const badge = document.createElement("div");
+      badge.id = "slotted-probe";
+      badge.textContent = "overlay";
+      player.appendChild(badge);
+
+      const fullscreen = player.shadowRoot.querySelector('[data-action="fullscreen"]');
+      const pip = player.shadowRoot.querySelector('[data-action="pip"]');
+      return {
+        slotted: badge.assignedSlot !== null,
+        painted: badge.getBoundingClientRect().width > 0,
+        fullscreenVisible: !fullscreen.hidden && fullscreen.offsetParent !== null,
+        pipVisible: !pip.hidden,
+        controlsVisible: player.shadowRoot.querySelector(".lumen-controls").getBoundingClientRect().height > 0,
+      };
+    });
+
+    check("light-DOM children are slotted", state.slotted);
+    check("slotted content is laid out", state.painted);
+    // Guards the support probe: Chromium has fullscreen, so hiding the
+    // button here would mean the detection is broken for everyone.
+    check("fullscreen button is offered", state.fullscreenVisible);
+    check("PiP button is offered", state.pipVisible);
+    check("controls have height", state.controlsVisible);
+    await page.close();
+  }
+
+  // --- subtitles render through the custom overlay -----------------------
+  console.log("\nSubtitles:");
+  {
+    const page = await browser.newPage();
+    const errors = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await page.goto(`${BASE}/subtitles.html`, { waitUntil: "domcontentloaded", timeout: 20000 });
+    await page.waitForTimeout(1500);
+
+    const state = await page.evaluate(async () => {
+      const player = document.querySelector("lumen-player");
+      const track = player.textTracks[0];
+      player.setSubtitleTrack?.(track) ?? player.subtitles?.setActiveTrack?.(track);
+      return {
+        trackCount: player.textTracks.length,
+        // The browser must not be drawing captions itself — "hidden" is
+        // what lets the custom overlay own the styling.
+        mode: player.videoElement.textTracks[0]?.mode,
+        prefsPersist: (() => {
+          player.setSubtitlePrefs({ fontSize: 1.3 });
+          return player.subtitlePrefs.fontSize;
+        })(),
+      };
+    });
+
+    check("external track discovered", state.trackCount > 0, `${state.trackCount} track(s)`);
+    check("cue parsing enabled without native rendering", state.mode === "hidden", String(state.mode));
+    check("style preferences apply", state.prefsPersist === 1.3);
+    check("no uncaught errors", errors.length === 0, errors.join("; "));
     await page.close();
   }
 } finally {

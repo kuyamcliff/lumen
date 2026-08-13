@@ -6,6 +6,7 @@ import { SubtitleManager } from "./subtitles/SubtitleManager";
 import { ControlsController } from "./ui/ControlsController";
 import { ChapterManager } from "./media/ChapterManager";
 import { CastController } from "./media/CastController";
+import { enterFullscreen, exitFullscreen, isFullscreen } from "./media/fullscreen";
 import { Translator, type LumenStrings } from "./i18n";
 import { DrmController, type LumenDrmConfig } from "./core/DrmController";
 import type { LumenPlugin } from "./plugins/types";
@@ -281,11 +282,30 @@ export class LumenPlayer extends HTMLElement {
     this.video.currentTime = time;
   }
 
+  /**
+   * Overrides `Element.requestFullscreen` so the prefixed and iOS paths are
+   * covered. Always returns a promise — the inherited method doesn't even
+   * exist on iPhone, so calling it there threw synchronously and no
+   * `.catch()` could help.
+   */
   requestFullscreen(): Promise<void> {
-    return super.requestFullscreen();
+    return enterFullscreen(this, this.video);
   }
 
-  requestPictureInPicture(): Promise<PictureInPictureWindow> {
+  exitFullscreen(): Promise<void> {
+    return exitFullscreen(this.video);
+  }
+
+  get isFullscreen(): boolean {
+    return isFullscreen(this, this.video);
+  }
+
+  async requestPictureInPicture(): Promise<PictureInPictureWindow> {
+    // Not every browser implements PiP; rejecting is something a caller can
+    // handle, throwing synchronously from an async-looking call is not.
+    if (typeof this.video.requestPictureInPicture !== "function") {
+      throw new Error("Picture-in-Picture is not available");
+    }
     return this.video.requestPictureInPicture();
   }
 

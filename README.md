@@ -6,7 +6,7 @@ Lumen is a web-first, framework-agnostic video player built as a native
 Web Component. Drop in one tag and it plays **MP4, MOV, MKV, WebM, Ogg,
 FLV, MPEG-TS, HLS and DASH** — including formats no browser supports
 natively — with a premium default UI, deep subtitle customization, DRM,
-ads, and a clean TypeScript API, from a core bundle under **25 kB
+ads, and a clean TypeScript API, from a core bundle under **26 kB
 gzipped**.
 
 📖 **[Documentation](docs/index.html)** · 🎬 **[Live examples](examples/index.html)**
@@ -40,7 +40,7 @@ import "@lumen/player";
   every browser's `<video>` element. Lumen identifies a file by its bytes
   and, where the container is the only obstacle, rebuilds it as fragmented
   MP4 in JavaScript — no transcoding, no WASM decoder, no quality loss.
-- **Tiny core.** ~24.8 kB gzipped with zero required runtime dependencies.
+- **Tiny core.** ~25.7 kB gzipped with zero required runtime dependencies.
   HLS (`hls.js`), DASH (`dashjs`), the corrupt-MP4 fallback (`mp4box`),
   the MKV and FLV remuxers, the corrupt-file recovery path, the ads plugin
   and the framework wrappers are all separate lazily-loaded chunks — pages that don't need them never
@@ -239,8 +239,11 @@ const off = player.on("timeupdate", ({ currentTime, duration }) => { /* ... */ }
 player.once("ready", () => console.log("mounted"));
 off();
 
-// Fullscreen / PiP
+// Fullscreen / PiP — resolves on iOS and prefixed WebKit too,
+// and rejects (never throws) where neither is available
 player.requestFullscreen();
+player.exitFullscreen();
+player.isFullscreen;
 player.requestPictureInPicture();
 
 player.destroy(); // tear down engine + listeners

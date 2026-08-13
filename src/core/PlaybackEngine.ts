@@ -58,6 +58,15 @@ function detectType(source: LumenSource): LumenSourceType {
   return "auto";
 }
 
+/** Resolves a possibly-relative URL against the page. Falls back to the input where there's no document base (a worker, say). */
+function toAbsoluteUrl(src: string): string {
+  try {
+    return new URL(src, typeof document !== "undefined" ? document.baseURI : undefined).href;
+  } catch {
+    return src;
+  }
+}
+
 function mimeFor(type: LumenSourceType): string {
   switch (type) {
     case "mp4":
@@ -276,12 +285,12 @@ export class PlaybackEngine {
     this.currentType = type;
 
     if (type === "hls") {
-      await this.loadHls(best.src);
+      await this.loadHls(best.src, token);
       return;
     }
 
     if (type === "dash") {
-      await this.loadDash(best.src);
+      await this.loadDash(best.src, token);
       return;
     }
 
@@ -315,7 +324,7 @@ export class PlaybackEngine {
         return;
 
       case "mpeg-ts":
-        await this.loadTransportStream(src);
+        await this.loadTransportStream(src, token);
         return;
 
       case "flv":
@@ -360,13 +369,19 @@ export class PlaybackEngine {
   }
 
   /** Plays an MPEG-DASH manifest through dash.js. */
-  private async loadDash(src: string): Promise<void> {
+  private async loadDash(src: string, token: number): Promise<void> {
     const { DashEngine } = await import("./DashEngine");
-    if (this.destroyed) return;
+    if (this.destroyed || token !== this.loadToken) return;
 
     const engine = new DashEngine(this.video, this.emitter);
     const loaded = await engine.load(src, this.options.drm?.() ?? null);
-    if (this.destroyed) return;
+    // A newer load() has already torn this engine's predecessor down; without
+    // the token check a slow manifest fetch would attach dash.js over the top
+    // of whatever is now playing.
+    if (this.destroyed || token !== this.loadToken) {
+      engine.destroy();
+      return;
+    }
 
     if (!loaded) {
       this.emitFatal(
@@ -402,9 +417,9 @@ export class PlaybackEngine {
    * transport-stream transmuxer — handing it a one-entry playlist reuses
    * that instead of duplicating a TS demuxer here.
    */
-  private async loadTransportStream(src: string): Promise<void> {
+  private async loadTransportStream(src: string, token: number): Promise<void> {
     const HlsCtor = await loadHlsCtor();
-    if (this.destroyed) return;
+    if (this.destroyed || token !== this.loadToken) return;
 
     if (!HlsCtor || !HlsCtor.isSupported()) {
       this.emitFatal(
@@ -414,8 +429,17 @@ export class PlaybackEngine {
       return;
     }
 
-    const playlist = ["#EXTM3U", "#EXT-X-TARGETDURATION:10", "#EXTINF:10,", src, "#EXT-X-ENDLIST"].join("\n");
-    this.attachHls(HlsCtor, `data:application/vnd.apple.mpegurl;base64,${btoa(playlist)}`);
+    // Absolute, because the synthetic playlist below lives at a `data:`
+    // URL: a relative segment path would be resolved against that instead
+    // of against the page, and fail to load.
+    const absolute = toAbsoluteUrl(src);
+    const playlist = ["#EXTM3U", "#EXT-X-TARGETDURATION:10", "#EXTINF:10,", absolute, "#EXT-X-ENDLIST"].join("\n");
+
+    // Percent-encoded rather than base64: `btoa` throws on any character
+    // above U+00FF, so a URL with non-Latin-1 characters in it — a
+    // perfectly ordinary filename in most of the world — used to take down
+    // the whole load with a raw InvalidCharacterError.
+    this.attachHls(HlsCtor, `data:application/vnd.apple.mpegurl,${encodeURIComponent(playlist)}`);
   }
 
   private pickBestSource(sources: LumenSource[]): LumenSource | undefined {
@@ -432,7 +456,7 @@ export class PlaybackEngine {
     }) ?? sources[0];
   }
 
-  private async loadHls(src: string): Promise<void> {
+  private async loadHls(src: string, token: number): Promise<void> {
     const canNative = this.options.forceEngine !== "hlsjs" && this.video.canPlayType("application/vnd.apple.mpegurl") !== "";
 
     if (canNative && this.options.forceEngine !== "hlsjs") {
@@ -442,6 +466,8 @@ export class PlaybackEngine {
     }
 
     const HlsCtor = await loadHlsCtor();
+    if (this.destroyed || token !== this.loadToken) return;
+
     if (!HlsCtor || !HlsCtor.isSupported()) {
       if (canNative) {
         this._isHls = true;

@@ -81,18 +81,24 @@ export const Lumen = defineComponent({
 
     expose({ player: element });
 
+    // The `^` prefix forces attribute binding. Vue otherwise prefers a DOM
+    // property whenever the element has one of that name, which breaks two
+    // ways here: `chapters` is a read-only getter and throws, and setting
+    // the `muted` property to "" is falsy, so the player would never mute.
+    // These inputs are attribute-shaped — the element observes them as
+    // attributes — so binding them as attributes is also simply correct.
     return () =>
       h("lumen-player", {
         ref: element,
-        poster: props.poster,
-        theme: props.theme,
-        thumbnails: props.thumbnails,
-        chapters: props.chapters,
-        "aspect-ratio": props.aspectRatio,
-        "object-fit": props.objectFit,
-        autoplay: props.autoplay ? "" : undefined,
-        loop: props.loop ? "" : undefined,
-        muted: props.muted ? "" : undefined,
+        "^poster": props.poster,
+        "^theme": props.theme,
+        "^thumbnails": props.thumbnails,
+        "^chapters": props.chapters,
+        "^aspect-ratio": props.aspectRatio,
+        "^object-fit": props.objectFit,
+        "^autoplay": props.autoplay ? "" : undefined,
+        "^loop": props.loop ? "" : undefined,
+        "^muted": props.muted ? "" : undefined,
       });
   },
 });

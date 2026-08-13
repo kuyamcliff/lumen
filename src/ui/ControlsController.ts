@@ -9,6 +9,13 @@ import { bufferedEnd, clamp, formatTime } from "../utils/time";
 import { isCoarsePointer } from "../utils/dom";
 import { icon } from "./icons";
 import { ThumbnailTrack } from "./Thumbnails";
+import {
+  enterFullscreen,
+  exitFullscreen,
+  isFullscreen,
+  isFullscreenSupported,
+  onFullscreenChange,
+} from "../media/fullscreen";
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 const IDLE_MS = 2600;
@@ -92,6 +99,8 @@ export class ControlsController {
   private boundOutsideClick = this.onOutsideClick.bind(this);
   private boundKeydown = this.onKeydown.bind(this);
   private boundFullscreenChange = () => this.onFullscreenChange();
+  /** Unsubscribes every fullscreen-change spelling in one call. */
+  private offFullscreenChange: (() => void) | null = null;
   private boundMenuClick = (event: Event) => {
     const item = (event.target as HTMLElement).closest<HTMLElement>("[data-menu-action]");
     if (item) this.onMenuAction(item);
@@ -154,7 +163,7 @@ export class ControlsController {
     this.refreshPlaylistButtons();
 
     document.addEventListener("click", this.boundOutsideClick, true);
-    document.addEventListener("fullscreenchange", this.boundFullscreenChange);
+    this.offFullscreenChange = onFullscreenChange(this.video, this.boundFullscreenChange);
 
     // Menu contents are re-rendered constantly, so the handler is delegated
     // from the menu container once. Registering it per render used to leak
@@ -578,10 +587,10 @@ export class ControlsController {
 
   private async toggleFullscreen(): Promise<void> {
     try {
-      if (document.fullscreenElement) {
-        await document.exitFullscreen();
+      if (isFullscreen(this.host, this.video)) {
+        await exitFullscreen(this.video);
       } else {
-        await this.host.requestFullscreen();
+        await enterFullscreen(this.host, this.video);
       }
     } catch {
       this.announce(this.strings.t("fullscreenUnavailable"));
@@ -590,13 +599,16 @@ export class ControlsController {
 
   private onFullscreenChange(): void {
     this.updateFullscreenIcon();
-    const isFs = document.fullscreenElement === this.host;
+    const isFs = isFullscreen(this.host, this.video);
     this.emitter.emit(isFs ? "enterfullscreen" : "exitfullscreen", undefined);
   }
 
   private updateFullscreenIcon(): void {
     const btn = $(this.root, '[data-action="fullscreen"]');
-    const isFs = document.fullscreenElement === this.host;
+    // Hidden where no form of fullscreen exists at all, rather than left
+    // there to announce "unavailable" on every press.
+    btn.hidden = !isFullscreenSupported(this.host, this.video);
+    const isFs = isFullscreen(this.host, this.video);
     btn.innerHTML = icon(isFs ? "fullscreen-exit" : "fullscreen");
     btn.setAttribute("aria-label", this.strings.t(isFs ? "exitFullscreen" : "fullscreen"));
   }
@@ -736,7 +748,9 @@ export class ControlsController {
       const qualityLabel = this.engine.isAutoQuality
         ? `${this.strings.t("auto")}${quality ? ` (${quality.label})` : ""}`
         : quality?.label ?? this.strings.t("auto");
-      if (this.engine.isHls && this.engine.qualityLevels.length > 0) {
+      // `isAdaptive`, not `isHls`: DASH streams carry quality levels too,
+      // and gating on HLS alone hid the menu for every one of them.
+      if (this.engine.isAdaptive && this.engine.qualityLevels.length > 0) {
         menu.appendChild(this.menuRow(this.strings.t("quality"), qualityLabel, "open-quality"));
       }
 
@@ -842,7 +856,25 @@ export class ControlsController {
     row.className = "lumen-menu-item";
     row.dataset.menuAction = action;
     row.setAttribute("role", "menuitem");
-    row.innerHTML = `<span>${label}</span><span class="lumen-menu-value" style="color:var(--lumen-color-text-muted);display:flex;align-items:center;gap:4px">${value} ${icon("chevronRight")}</span>`;
+
+    const name = document.createElement("span");
+    name.textContent = label;
+
+    const detail = document.createElement("span");
+    detail.className = "lumen-menu-value";
+    detail.style.cssText = "color:var(--lumen-color-text-muted);display:flex;align-items:center;gap:4px";
+
+    // Assembled from nodes rather than an interpolated HTML string: `value`
+    // is media-derived — a caption track's label, an audio track's name
+    // from a manifest — so an angle bracket in it used to be parsed as
+    // markup, which is a script-injection route for anyone who can serve
+    // the media.
+    const text = document.createElement("span");
+    text.textContent = value;
+    detail.appendChild(text);
+    detail.insertAdjacentHTML("beforeend", icon("chevronRight"));
+
+    row.append(name, detail);
     return row;
   }
 
@@ -1101,7 +1133,8 @@ export class ControlsController {
     document.removeEventListener("click", this.boundOutsideClick, true);
     // This one used to be an anonymous listener that was never removed, so
     // a destroyed player kept reacting to fullscreen changes forever.
-    document.removeEventListener("fullscreenchange", this.boundFullscreenChange);
+    this.offFullscreenChange?.();
+    this.offFullscreenChange = null;
     this.els.menu.removeEventListener("click", this.boundMenuClick);
     this.els.menu.removeEventListener("keydown", this.boundMenuKeydown);
     this.root.removeEventListener("keydown", this.boundKeydown);

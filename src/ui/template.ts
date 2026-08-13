@@ -21,6 +21,14 @@ export function renderShell(): string {
         </button>
       </div>
 
+      <!--
+        Overlay slot. A shadow root renders none of its host's light-DOM
+        children unless they're slotted, so without this anything a plugin
+        or an application appends to <lumen-player> would exist but never
+        be displayed. Sits above the video and below the controls.
+      -->
+      <div class="lumen-overlay" part="overlay"><slot></slot></div>
+
       <div class="lumen-error" part="error" hidden role="alert">
         ${icon("alert")}
         <p data-el="error-message"></p>

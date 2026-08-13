@@ -58,17 +58,23 @@ export async function downloadForOffline(
       });
     }
 
-    const body = new Blob(chunks as BlobPart[], {
-      type: response.headers.get("Content-Type") ?? "application/octet-stream",
-    });
+    // Concatenated directly rather than via a Blob: one fewer copy, and no
+    // reliance on Blob.stream(), which not every environment implements.
+    const body = new Uint8Array(receivedBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      body.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    const contentType = response.headers.get("Content-Type") ?? "application/octet-stream";
 
     const cache = await caches.open(CACHE_NAME);
     await cache.put(
       url,
       new Response(body, {
         headers: {
-          "Content-Type": body.type,
-          "Content-Length": String(body.size),
+          "Content-Type": contentType,
+          "Content-Length": String(body.byteLength),
           // Range support is what makes seeking work offline; advertise it
           // so the service worker below knows it can slice this response.
           "Accept-Ranges": "bytes",

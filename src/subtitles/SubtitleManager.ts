@@ -8,6 +8,29 @@ function isTextKind(track: TextTrack): boolean {
   return TEXT_KINDS.has(track.kind);
 }
 
+/** The parts of a cue this module actually uses. */
+interface TimedCue {
+  startTime: number;
+  endTime: number;
+  text: string;
+}
+
+/**
+ * Cues are duck-typed rather than tested with `instanceof VTTCue`, for two
+ * reasons that both end in captions silently never appearing: `VTTCue` is
+ * not defined in every environment (the bare reference throws), and cues
+ * extracted from in-band CEA-608/708 captions are plain `TextTrackCue`
+ * objects in Safari, which an `instanceof` check drops on the floor.
+ */
+function asTimedCue(cue: TextTrackCue): TimedCue | null {
+  const candidate = cue as Partial<TimedCue>;
+  return typeof candidate.startTime === "number" &&
+    typeof candidate.endTime === "number" &&
+    typeof candidate.text === "string"
+    ? (candidate as TimedCue)
+    : null;
+}
+
 function sanitizeCueHtml(raw: string): string {
   const escaped = raw.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   return escaped
@@ -123,9 +146,10 @@ export class SubtitleManager {
     const delta = targetOffset - previous;
     if (delta !== 0 && track.cues) {
       for (const cue of Array.from(track.cues)) {
-        if (cue instanceof VTTCue) {
-          cue.startTime += delta;
-          cue.endTime += delta;
+        const timed = asTimedCue(cue);
+        if (timed) {
+          timed.startTime += delta;
+          timed.endTime += delta;
         }
       }
     }
@@ -141,10 +165,11 @@ export class SubtitleManager {
 
     const frag = document.createDocumentFragment();
     for (const cue of Array.from(cues)) {
-      if (!(cue instanceof VTTCue)) continue;
+      const timed = asTimedCue(cue);
+      if (!timed) continue;
       const line = document.createElement("span");
       line.className = "lumen-cue";
-      line.innerHTML = sanitizeCueHtml(cue.text);
+      line.innerHTML = sanitizeCueHtml(timed.text);
       frag.appendChild(line);
     }
     this.overlay.appendChild(frag);

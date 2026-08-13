@@ -45,9 +45,13 @@ export function ambient(options: AmbientOptions = {}): LumenPlugin {
       glow.setAttribute("aria-hidden", "true");
       glow.style.cssText = [
         "position:absolute",
-        `inset:-${config.spread}px`,
-        "width:auto",
-        "height:auto",
+        `left:-${config.spread}px`,
+        `top:-${config.spread}px`,
+        // A canvas is a replaced element: with `width:auto` it takes its
+        // intrinsic 16x9 size and `inset` alone will not stretch it, so the
+        // box has to be sized explicitly.
+        `width:calc(100% + ${config.spread * 2}px)`,
+        `height:calc(100% + ${config.spread * 2}px)`,
         "z-index:-1",
         `filter:blur(${config.spread / 2}px) saturate(1.6)`,
         `opacity:${config.intensity}`,

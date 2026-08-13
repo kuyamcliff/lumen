@@ -70,9 +70,18 @@ player.previous(): void</code></pre>
 
 <h2>Presentation</h2>
 <pre><code>player.requestFullscreen(): Promise&lt;void&gt;
+player.exitFullscreen(): Promise&lt;void&gt;
+player.isFullscreen: boolean
 player.requestPictureInPicture(): Promise&lt;PictureInPictureWindow&gt;
 player.isCastAvailable: boolean
 player.requestCast(): Promise&lt;boolean&gt;</code></pre>
+<p>
+  <code>requestFullscreen()</code> covers the prefixed WebKit spelling and
+  the iPhone case, where the Fullscreen API doesn't exist on elements at
+  all and the video itself has to be promoted to the system player. It
+  always returns a promise — including where nothing is supported, so a
+  <code>.catch()</code> is enough to handle every outcome.
+</p>
 
 <h2>Extension</h2>
 <pre><code>player.use(plugin: LumenPlugin): this

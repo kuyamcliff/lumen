@@ -182,6 +182,23 @@
   }
 }
 
+/* ---------- overlay slot ---------- */
+.lumen-overlay {
+  position: absolute;
+  inset: 0;
+  /* Transparent to the pointer by default so an empty slot can't swallow
+     clicks meant for the video; slotted content opts back in. */
+  pointer-events: none;
+}
+.lumen-overlay ::slotted(*) {
+  pointer-events: auto;
+}
+/* <source> and <track> are configuration, not content — never show them. */
+.lumen-overlay ::slotted(source),
+.lumen-overlay ::slotted(track) {
+  display: none;
+}
+
 /* ---------- error state ---------- */
 .lumen-error {
   position: absolute;

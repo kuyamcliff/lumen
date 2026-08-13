@@ -70,8 +70,14 @@ export class CastController {
       this.video.webkitShowPlaybackTargetPicker();
       return true;
     }
+    // `await undefined` resolves happily, so without this check a browser
+    // with no Remote Playback API would report having shown a picker that
+    // never existed.
+    const remote = this.video.remote;
+    if (typeof remote?.prompt !== "function") return false;
+
     try {
-      await this.video.remote?.prompt();
+      await remote.prompt();
       return true;
     } catch {
       // Also thrown when the user simply dismisses the picker.

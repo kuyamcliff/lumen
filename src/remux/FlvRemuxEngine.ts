@@ -75,15 +75,25 @@ export class FlvRemuxEngine {
       // header, so the pipeline can't start until the first one arrives.
       this.demuxer.onVideoConfig = (config) => {
         this.pendingConfigs.set("video", config);
-        void this.maybeStart().then((ok) => ok && finish(true));
+        this.pendingStart = this.maybeStart();
+        void this.pendingStart.then((ok) => ok && finish(true));
       };
       this.demuxer.onAudioConfig = (config) => {
         this.pendingConfigs.set("audio", config);
-        void this.maybeStart().then((ok) => ok && finish(true));
+        this.pendingStart = this.maybeStart();
+        void this.pendingStart.then((ok) => ok && finish(true));
       };
       this.demuxer.onSample = (sample) => this.onSample(sample);
 
-      void this.pump(response).then(() => finish(this.started));
+      void this.pump(response).then(async () => {
+        // The file has ended, so no audio configuration is still coming:
+        // stop waiting for one, then let the start settle before reporting.
+        // Without this a video-only FLV — a silent clip or screen recording
+        // — reports failure simply because the read outran the grace period.
+        this.endAudioGraceEarly();
+        await this.pendingStart;
+        finish(this.started);
+      });
     });
   }
 
@@ -122,7 +132,7 @@ export class FlvRemuxEngine {
 
     if (video && !audio && !this.audioGraceElapsed) {
       this.audioGraceElapsed = true;
-      await new Promise((resolve) => setTimeout(resolve, AUDIO_GRACE_MS));
+      await this.waitForAudioGrace();
       if (this.destroyed) return false;
       return this.maybeStart();
     }
@@ -194,6 +204,28 @@ export class FlvRemuxEngine {
 
   private audioGraceElapsed = false;
   private starting = false;
+  private pendingStart: Promise<boolean> | null = null;
+  private graceResolve: (() => void) | null = null;
+  private graceTimer: number | null = null;
+
+  /** Waits briefly for an audio configuration tag, or until the file ends. */
+  private waitForAudioGrace(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.graceResolve = resolve;
+      this.graceTimer = setTimeout(() => this.endAudioGraceEarly(), AUDIO_GRACE_MS) as unknown as number;
+    });
+  }
+
+  /** Ends the wait immediately — used when the stream finishes first. */
+  private endAudioGraceEarly(): void {
+    if (this.graceTimer !== null) {
+      clearTimeout(this.graceTimer);
+      this.graceTimer = null;
+    }
+    const resolve = this.graceResolve;
+    this.graceResolve = null;
+    resolve?.();
+  }
 
   private onSample(sample: FlvSample): void {
     const track = this.tracks.get(sample.kind);
@@ -257,6 +289,7 @@ export class FlvRemuxEngine {
 
   destroy(): void {
     this.destroyed = true;
+    this.endAudioGraceEarly();
     this.demuxer.onSample = undefined;
     this.demuxer.onVideoConfig = undefined;
     this.demuxer.onAudioConfig = undefined;
