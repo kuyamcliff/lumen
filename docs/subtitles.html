@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Subtitles & chapters — Lumen</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar"></aside>
+      <main>
+<h1>Subtitles &amp; chapters</h1>
+<p class="lede">Subtitle tracks are declared exactly like native
+<code>&lt;video&gt;</code>, but rendered through Lumen's own overlay so
+styling isn't limited by the browser's caption box.</p>
+
+<h2>Adding subtitles</h2>
+<pre><code>&lt;lumen-player src="video.mp4"&gt;
+  &lt;track kind="subtitles" src="en.vtt" srclang="en" label="English" default /&gt;
+  &lt;track kind="subtitles" src="fr.vtt" srclang="fr" label="Français" /&gt;
+&lt;/lumen-player&gt;</code></pre>
+<pre><code>player.addTextTrack({ src: "de.vtt", label: "Deutsch", srclang: "de" });
+player.textTracks;   // TextTrack[]</code></pre>
+
+<h2>Embedded subtitles</h2>
+<p>MKV files carrying text subtitles (SRT-style or ASS/SSA) have them
+extracted during remuxing and surfaced as ordinary text tracks — they
+appear in the same captions menu as external files.</p>
+<pre><code>player.on("embeddedtexttrack", ({ track }) =&gt; console.log(track.label));</code></pre>
+
+<h2>Styling</h2>
+<p>Viewers can restyle captions from Settings → Captions → Appearance, and
+their choices persist. The same options are available programmatically:</p>
+<pre><code>player.setSubtitlePrefs({
+  fontSize: 1.3,            // relative scale
+  color: "#ffffff",
+  background: "#000000",
+  backgroundOpacity: 0.7,
+  edge: "outline",          // none | drop-shadow | outline | raised
+  position: "bottom",       // bottom | top
+  offsetSeconds: 0.5,       // shift cues later, for out-of-sync files
+});</code></pre>
+
+<h2>Chapters</h2>
+<p>Chapters come from a WebVTT chapters file and appear three ways: as
+dividers on the progress bar, as a title while scrubbing, and as a jump
+menu.</p>
+<pre><code>&lt;lumen-player src="video.mp4" chapters="chapters.vtt"&gt;&lt;/lumen-player&gt;</code></pre>
+<pre><code>player.chapters;          // [{ start, end, title }]
+player.currentChapter;    // the chapter at the playhead
+player.setChapters([{ start: 0, end: 60, title: "Intro" }]);
+
+player.on("chapterchange", ({ chapter }) =&gt; console.log(chapter?.title));</code></pre>
+
+<h2>Preview thumbnails</h2>
+<pre><code>&lt;lumen-player src="video.mp4" thumbnails="thumbs.vtt"&gt;&lt;/lumen-player&gt;</code></pre>
+<p>Accepts the WebVTT sprite-sheet format used by Mux, Bunny and similar
+services (<code>image.jpg#xywh=x,y,w,h</code>).</p>
+      </main>
+    </div>
+    <script type="module" src="./nav.js"></script>
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>

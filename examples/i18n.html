@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lumen — Translation</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <style>
+      .langs {
+        display: flex;
+        gap: 8px;
+        margin: 16px 0;
+        flex-wrap: wrap;
+      }
+      .langs button {
+        all: unset;
+        cursor: pointer;
+        padding: 8px 14px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        font-size: 0.85rem;
+      }
+      .langs button[aria-pressed="true"] {
+        border-color: #eab54c;
+        color: #eab54c;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Translation</h1>
+      <p>
+        Every control label, menu entry and screen-reader announcement
+        resolves through one string table. Switch languages below, then open
+        the settings menu — nothing in the UI is hard-coded to English.
+      </p>
+
+      <div class="langs" id="langs"></div>
+
+      <lumen-player
+        id="player"
+        src="https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"
+      >
+        <track kind="subtitles" src="./media/sample-en.vtt" srclang="en" label="English" default />
+        <track kind="subtitles" src="./media/sample-fr.vtt" srclang="fr" label="Français" />
+      </lumen-player>
+
+      <h2>The API</h2>
+      <pre><code>player.setTranslations({
+  play: "Lecture",
+  pause: "Pause",
+  settings: "Réglages",
+  quality: "Qualité",
+  // Any key you omit falls back to English, so a partial
+  // translation degrades gracefully instead of blanking out.
+});</code></pre>
+    </main>
+
+    <script type="module">
+      import "/src/index.ts";
+
+      const player = document.getElementById("player");
+
+      const locales = {
+        English: {},
+        Français: {
+          play: "Lecture",
+          pause: "Pause",
+          mute: "Muet",
+          unmute: "Réactiver le son",
+          volume: "Volume",
+          seek: "Rechercher",
+          settings: "Réglages",
+          speed: "Vitesse",
+          normalSpeed: "Normale",
+          quality: "Qualité",
+          audio: "Audio",
+          chapters: "Chapitres",
+          captions: "Sous-titres",
+          appearance: "Apparence",
+          fullscreen: "Plein écran",
+          exitFullscreen: "Quitter le plein écran",
+          pictureInPicture: "Image dans l'image",
+          off: "Désactivé",
+          auto: "Auto",
+          back: "Retour",
+          tryAgain: "Réessayer",
+          subtitleSize: "Taille",
+          small: "Petite",
+          medium: "Moyenne",
+          large: "Grande",
+        },
+        日本語: {
+          play: "再生",
+          pause: "一時停止",
+          mute: "ミュート",
+          unmute: "ミュート解除",
+          settings: "設定",
+          speed: "再生速度",
+          normalSpeed: "標準",
+          quality: "画質",
+          captions: "字幕",
+          fullscreen: "全画面表示",
+          exitFullscreen: "全画面表示を終了",
+          off: "オフ",
+          auto: "自動",
+          back: "戻る",
+        },
+      };
+
+      const container = document.getElementById("langs");
+      let active = "English";
+
+      const render = () => {
+        container.replaceChildren();
+        for (const name of Object.keys(locales)) {
+          const button = document.createElement("button");
+          button.textContent = name;
+          button.setAttribute("aria-pressed", String(name === active));
+          button.addEventListener("click", () => {
+            active = name;
+            player.setTranslations(locales[name]);
+            render();
+          });
+          container.appendChild(button);
+        }
+      };
+
+      render();
+    </script>
+  </body>
+</html>

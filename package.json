@@ -26,7 +26,32 @@
       "types": "./dist/types/index.d.ts",
       "import": "./dist/lumen.js",
       "require": "./dist/lumen.umd.cjs"
-    }
+    },
+    "./react": {
+      "types": "./dist/types/react/index.d.ts",
+      "import": "./dist/react.js"
+    },
+    "./vue": {
+      "types": "./dist/types/vue/index.d.ts",
+      "import": "./dist/vue.js"
+    },
+    "./svelte": {
+      "types": "./dist/types/svelte/index.d.ts",
+      "import": "./dist/svelte.js"
+    },
+    "./plugins/ads": {
+      "types": "./dist/types/plugins/ads/index.d.ts",
+      "import": "./dist/plugins/ads.js"
+    },
+    "./plugins/ambient": {
+      "types": "./dist/types/plugins/ambient.d.ts",
+      "import": "./dist/plugins/ambient.js"
+    },
+    "./offline": {
+      "types": "./dist/types/offline.d.ts",
+      "import": "./dist/offline.js"
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist"
@@ -36,16 +61,21 @@
   ],
   "scripts": {
     "dev": "vite",
-    "build": "tsc -p tsconfig.build.json && vite build",
+    "build": "tsc -p tsconfig.build.json && vite build && LUMEN_FORMAT=umd vite build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "size": "npm run build && node scripts/check-size.mjs"
+    "size": "npm run build && node scripts/check-size.mjs",
+    "test:browser": "node scripts/browser-test.mjs"
   },
   "peerDependencies": {
+    "dashjs": "^4.7.0 || ^5.0.0",
     "hls.js": "^1.5.0",
-    "mp4box": "^2.4.0"
+    "mp4box": "^2.4.0",
+    "react": ">=17",
+    "svelte": ">=4",
+    "vue": ">=3"
   },
   "peerDependenciesMeta": {
     "hls.js": {
@@ -53,15 +83,31 @@
     },
     "mp4box": {
       "optional": true
+    },
+    "dashjs": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "vue": {
+      "optional": true
+    },
+    "svelte": {
+      "optional": true
     }
   },
   "devDependencies": {
     "@types/node": "^26.2.0",
+    "@types/react": "^18.3.31",
     "hls.js": "^1.5.15",
     "jsdom": "^30.0.1",
     "mp4box": "^2.4.1",
+    "react": "^18.3.1",
     "typescript": "^5.5.4",
     "vite": "^5.4.2",
-    "vitest": "^2.0.5"
+    "vitest": "^2.0.5",
+    "vue": "^3.5.41",
+    "playwright": "^1.48.0"
   }
 }

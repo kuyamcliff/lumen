@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      # Builds and enforces the gzip budget. The core must stay small
+      # enough that adding a player never becomes a page-weight decision.
+      - name: Build and check size budget
+        run: npm run size
+
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      # jsdom has no media stack, so it cannot catch a MediaSource
+      # ordering bug, a malformed codec string, or a decoder rejecting a
+      # sample entry. Those only surface in a real browser.
+      - name: Browser smoke tests
+        run: npm run test:browser

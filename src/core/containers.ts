@@ -127,6 +127,7 @@ export function isPlayableContainer(kind: ContainerKind): boolean {
     kind === "webm" ||
     kind === "ogg" ||
     kind === "mpeg-ts" ||
+    kind === "flv" ||
     kind === "unknown" // unknown still gets a native attempt — the browser may know better than us
   );
 }

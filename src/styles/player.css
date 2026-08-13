@@ -370,6 +370,38 @@
   color: var(--lumen-color-text);
 }
 
+.lumen-preview-chapter {
+  font-size: 0.75rem;
+  font-weight: 600;
+  max-width: 200px;
+  text-align: center;
+  padding: 2px 6px;
+  border-radius: var(--lumen-radius-sm);
+  background: var(--lumen-color-surface-strong);
+  color: var(--lumen-color-text);
+}
+.lumen-preview-chapter[hidden] {
+  display: none;
+}
+
+/* ---------- chapter markers ---------- */
+.lumen-progress-chapters {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.lumen-chapter-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  /* Punched out of the bar rather than drawn on top, so markers read
+     clearly against both the buffered and played portions. */
+  background: var(--lumen-color-video-bg, #000);
+  opacity: 0.75;
+  transform: translateX(-1px);
+}
+
 /* ---------- control row ---------- */
 .lumen-row {
   display: flex;

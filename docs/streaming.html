@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HLS & DASH — Lumen</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar"></aside>
+      <main>
+<h1>HLS &amp; DASH</h1>
+<p class="lede">Adaptive streaming works the same way for both: point the
+player at a manifest and the quality menu populates itself.</p>
+
+<h2>HLS</h2>
+<pre><code>&lt;lumen-player src="https://example.com/stream.m3u8"&gt;&lt;/lumen-player&gt;</code></pre>
+<p>Safari plays HLS natively. Everywhere else Lumen loads
+<code>hls.js</code> on demand — install it, or include it via a script tag
+for plain HTML pages.</p>
+
+<h2>DASH</h2>
+<pre><code>&lt;lumen-player src="https://example.com/manifest.mpd"&gt;&lt;/lumen-player&gt;</code></pre>
+<p>Requires <code>dashjs</code>, loaded the same lazy way.</p>
+
+<h2>Quality selection</h2>
+<pre><code>player.qualityLevels;        // LumenQualityLevel[]
+player.currentQuality;       // the active level, or null on auto
+player.setQuality("auto");   // let ABR decide
+player.setQuality(3);        // pin to a level id
+
+player.on("qualitieschange", ({ levels }) =&gt; console.log(levels));
+player.on("qualitychange", ({ level, auto }) =&gt; console.log(level, auto));</code></pre>
+<p>The settings menu exposes the same list, with the active level marked
+and an <em>Auto</em> entry showing what ABR currently picked.</p>
+
+<h2>Audio tracks</h2>
+<p>Multi-language streams expose their audio renditions through one
+normalized API, whether they come from HLS, DASH, the native element, or
+a remuxed MKV:</p>
+<pre><code>player.audioTracks;          // [{ id, label, language, active }]
+player.setAudioTrack("fr");
+
+player.on("audiotrackchange", ({ track }) =&gt; console.log(track));</code></pre>
+
+<h2>Raw MPEG-TS</h2>
+<p>A bare <code>.ts</code> file plays through hls.js's transport-stream
+transmuxer — Lumen hands it a one-entry playlist rather than duplicating
+a TS demuxer.</p>
+      </main>
+    </div>
+    <script type="module" src="./nav.js"></script>
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lumen — Examples</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <style>
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 12px;
+        margin-top: 24px;
+      }
+      .card {
+        display: block;
+        padding: 18px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        text-decoration: none;
+        color: inherit;
+        transition: border-color 150ms ease, transform 150ms ease;
+      }
+      .card:hover {
+        border-color: #eab54c;
+        transform: translateY(-2px);
+      }
+      .card h2 {
+        margin: 0 0 6px;
+        font-size: 1rem;
+      }
+      .card p {
+        margin: 0;
+        font-size: 0.85rem;
+      }
+      .tagline {
+        color: #eab54c;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        font-size: 0.72rem;
+        font-weight: 600;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="tagline">Beautiful. Simple. Unbreakable. Lightweight.</p>
+      <h1>Lumen examples</h1>
+      <p>
+        Run <code>npm run dev</code> and open any of these. Each page is
+        plain HTML and JavaScript — no build step, no framework.
+      </p>
+
+      <div class="cards">
+        <a class="card" href="./basic.html">
+          <h2>Basic</h2>
+          <p>One tag, zero configuration, progressive MP4.</p>
+        </a>
+        <a class="card" href="./hls.html">
+          <h2>HLS</h2>
+          <p>Adaptive streaming with automatic and manual quality.</p>
+        </a>
+        <a class="card" href="./formats.html">
+          <h2>Any format</h2>
+          <p>MKV remuxed to fMP4 on the fly, plus container detection.</p>
+        </a>
+        <a class="card" href="./subtitles.html">
+          <h2>Subtitles</h2>
+          <p>Auto-detected tracks and a full styling panel.</p>
+        </a>
+        <a class="card" href="./playlist.html">
+          <h2>Playlists &amp; chapters</h2>
+          <p>Auto-advancing queue, chapter markers and jump menu.</p>
+        </a>
+        <a class="card" href="./theming.html">
+          <h2>Theming</h2>
+          <p>Dark, light, system, and a fully custom skin.</p>
+        </a>
+        <a class="card" href="./resilience.html">
+          <h2>Resilience</h2>
+          <p>A deliberately truncated MP4 that still plays.</p>
+        </a>
+        <a class="card" href="./i18n.html">
+          <h2>Translation</h2>
+          <p>Every UI string swapped to another language.</p>
+        </a>
+      </div>
+    </main>
+  </body>
+</html>

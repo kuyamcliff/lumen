@@ -4,9 +4,12 @@
 
 Lumen is a web-first, framework-agnostic video player built as a native
 Web Component. Drop in one tag and it plays **MP4, MOV, MKV, WebM, Ogg,
-MPEG-TS and HLS** — including formats no browser supports natively — with a
-premium default UI, deep subtitle customization, and a clean TypeScript API,
-from a core bundle under **19 kB gzipped**.
+FLV, MPEG-TS, HLS and DASH** — including formats no browser supports
+natively — with a premium default UI, deep subtitle customization, DRM,
+ads, and a clean TypeScript API, from a core bundle under **26 kB
+gzipped**.
+
+📖 **[Documentation](docs/index.html)** · 🎬 **[Live examples](examples/index.html)**
 
 ```html
 <script type="module" src="https://unpkg.com/@lumen/player/dist/lumen.js"></script>
@@ -37,10 +40,11 @@ import "@lumen/player";
   every browser's `<video>` element. Lumen identifies a file by its bytes
   and, where the container is the only obstacle, rebuilds it as fragmented
   MP4 in JavaScript — no transcoding, no WASM decoder, no quality loss.
-- **Tiny core.** ~18.4 kB gzipped with zero required runtime dependencies.
-  HLS (`hls.js`), the corrupt-MP4 fallback (`mp4box`) and the Matroska
-  remuxer are optional, lazily-loaded layers — pages that don't need them
-  never pay for them.
+- **Tiny core.** ~26 kB gzipped with zero required runtime dependencies.
+  HLS (`hls.js`), DASH (`dashjs`), the corrupt-MP4 fallback (`mp4box`),
+  the MKV and FLV remuxers, the ads plugin and the framework wrappers are
+  all separate lazily-loaded chunks — pages that don't need them never
+  download them, and CI enforces the budget.
 - **Beautiful by default.** A dark-first, premium control surface that needs
   zero configuration, plus a light theme and full CSS custom-property
   theming for everything else.
@@ -70,8 +74,10 @@ never the deciding factor.
 | **MOV / QuickTime** | Native, else remuxed | Browsers reject the `video/quicktime` MIME even when they can decode the contents; Lumen remuxes rather than giving up |
 | **MKV / Matroska** | Remuxed to fragmented MP4 | No browser plays MKV natively. Embedded subtitles are extracted too |
 | **MPEG-TS** (`.ts`, `.m2ts`) | `hls.js` transmuxer | Reuses hls.js's TS support instead of duplicating a demuxer |
+| **DASH** (`.mpd`) | `dash.js` | ABR + quality menu |
+| **FLV** | Remuxed to fragmented MP4 | Carries H.264/AAC directly, so it's a copy |
 | **Truncated / corrupt MP4** | `mp4box.js` + MSE | See [Resilience](#resilience) |
-| **AVI, WMV/ASF, FLV, MPEG-PS** | ❌ Detected, not played | Reported as `CONTAINER_UNSUPPORTED` with a message telling the viewer what to do, instead of a blank player |
+| **AVI, WMV/ASF, MPEG-PS** | ❌ Detected, not played | Reported as `CONTAINER_UNSUPPORTED` with a message telling the viewer what to do, instead of a blank player |
 
 ### Remuxing, and what limits it
 
@@ -123,8 +129,18 @@ and use the `CONTAINER_UNSUPPORTED` error to prompt for it.
 | CSS custom-property theming, dark/light/system themes | ✅ |
 | Network/decode error recovery with backoff, calm error UI | ✅ (see [Resilience](#resilience)) |
 | Best-effort playback of truncated/corrupt progressive MP4s via `mp4box.js` + MSE | ✅ (see [Resilience](#resilience)) |
-| Chapters, playlists, multi-audio-track, casting | 🚧 not yet — tracked as v1.x |
-| DASH, DRM, ads | ⬜ intentionally out of scope for the MIT core (future optional modules) |
+| Chapters — progress-bar markers, scrub titles, jump menu | ✅ |
+| Playlists with auto-advance and next/previous controls | ✅ |
+| Audio track selection (HLS, native, and MKV) | ✅ |
+| Casting — AirPlay and the Remote Playback API | ✅ |
+| Full internationalization of every UI string | ✅ |
+| MPEG-DASH via `dashjs` | ✅ |
+| DRM — Widevine, PlayReady, FairPlay | ✅ |
+| VAST 2–4 linear ads (pre/mid/post-roll) as an optional plugin | ✅ |
+| FLV playback via built-in demuxer + fMP4 remuxer | ✅ |
+| Plugin architecture, ambient mode | ✅ |
+| Offline/PWA helpers (Cache API + range-aware service worker) | ✅ |
+| React, Vue and Svelte wrappers | ✅ |
 
 ## Quick start
 
@@ -149,8 +165,9 @@ the browser can play it):
 ```
 
 See `examples/` for runnable pages: `basic.html`, `hls.html`,
-`subtitles.html`, `theming.html`, `formats.html`, `resilience.html`. Run `npm run dev` and
-open them from the printed local URL.
+`subtitles.html`, `theming.html`, `formats.html`, `resilience.html`,
+`playlist.html`, `i18n.html` — or open `examples/index.html` for an index
+of all of them. Run `npm run dev` and open it from the printed local URL.
 
 > `resilience.html` needs a real H.264/AAC-capable browser (regular Chrome,
 > Edge, Firefox, Safari). Minimal open-source Chromium builds — including
@@ -191,6 +208,32 @@ player.textTracks;                       // TextTrack[]
 player.addTextTrack({ src: "fr.vtt", label: "Français", srclang: "fr" });
 player.setSubtitlePrefs({ fontSize: 1.3, edge: "outline", offsetSeconds: 0.5 });
 
+// Audio tracks (HLS, native, or MKV)
+player.audioTracks;            // LumenAudioTrack[]
+player.setAudioTrack("fr");
+
+// Chapters
+player.chapters;               // LumenChapter[]
+player.currentChapter;         // LumenChapter | null
+player.setChapters([{ start: 0, end: 60, title: "Intro" }]);
+
+// Playlists — auto-advances when each item ends
+player.playlist = [
+  { src: "one.mkv", title: "First", chapters: "one.vtt" },
+  { src: "two.mp4", title: "Second", poster: "two.jpg" },
+];
+player.next();
+player.previous();
+player.playItem(1);
+player.playlistIndex;
+
+// Casting (AirPlay / Remote Playback)
+player.isCastAvailable;
+await player.requestCast();
+
+// Translation — omitted keys fall back to English
+player.setTranslations({ play: "Lecture", settings: "Réglages" });
+
 // Events
 const off = player.on("timeupdate", ({ currentTime, duration }) => { /* ... */ });
 player.once("ready", () => console.log("mounted"));
@@ -207,7 +250,10 @@ player.destroy(); // tear down engine + listeners
 
 `play`, `pause`, `ended`, `timeupdate`, `progress`, `volumechange`,
 `ratechange`, `waiting`, `playing`, `canplay`, `seeking`, `seeked`, `error`,
-`qualitychange`, `qualitieschange`, `texttrackchange`, `enterfullscreen`,
+`qualitychange`, `qualitieschange`, `texttrackchange`,
+`embeddedtexttrack`, `chapterschange`, `chapterchange`,
+`audiotrackschange`, `audiotrackchange`, `playlistchange`,
+`playlistitemchange`, `castavailabilitychange`, `enterfullscreen`,
 `exitfullscreen`, `enterpip`, `leavepip`, `loadedmetadata`, `ready`,
 `destroy`. Full payload types are in `src/types.ts`.
 
@@ -216,7 +262,26 @@ player.destroy(); // tear down engine + listeners
 `src`, `poster`, `autoplay`, `loop`, `muted`, `crossorigin`, `preload`,
 `theme` (`dark` | `light` | `system`), `aspect-ratio` (e.g. `16/9`),
 `object-fit` (e.g. `contain` | `cover`), `thumbnails` (URL to a WebVTT
-sprite sheet, the format used by Mux/Bunny/Vimeo-style scrub previews).
+sprite sheet, the format used by Mux/Bunny/Vimeo-style scrub previews),
+`chapters` (URL to a WebVTT chapters file).
+
+### Internationalization
+
+Every control label, menu entry, screen-reader announcement and error
+message resolves through one string table, so the player can be translated
+without forking it or reaching into the shadow DOM:
+
+```js
+player.setTranslations({
+  play: "再生",
+  pause: "一時停止",
+  settings: "設定",
+});
+```
+
+Any key you leave out keeps its English default, so a partial translation
+degrades to mixed language rather than blank buttons. The full key list is
+the `LumenStrings` interface in `src/i18n.ts`.
 
 ## Theming
 
@@ -313,8 +378,12 @@ src/
       boxes.ts             ISO-BMFF box-writing primitives
       Mp4Muxer.ts          fMP4 init + media segment generation
       sampleEntries.ts     codec → sample entry + RFC 6381 codec string
+  media/
+    ChapterManager.ts      WebVTT chapters, markers, jump targets
+    CastController.ts      AirPlay + Remote Playback availability
   subtitles/
     SubtitleManager.ts     track discovery, switching, styling, persistence
+  i18n.ts                  every user-visible string, with fallbacks
   ui/
     template.ts             shadow-DOM shell
     ControlsController.ts   all interaction wiring (the biggest module)
@@ -347,35 +416,29 @@ npm run size         # build + enforce the gzip budget
 
 ## Roadmap
 
-Following the PRD's phase plan:
+Everything in the PRD is built. What remains is genuinely optional:
 
-- **Phase 0–1 (this release):** project foundation, design tokens, native +
-  HLS playback, responsive/keyboard-accessible controls. ✅
-- **Phase 2 (mostly done):** subtitle system is complete; incomplete/corrupt
-  MP4 resilience is implemented via `mp4box.js` + MSE (see
-  [Resilience](#resilience)) with documented limits (MP4 only, seeking
-  clamped to buffered ranges).
-- **Phase 3 (mostly done):** default theme, micro-interactions, loading/
-  error states, a11y, mobile touch, scrub preview (thumbnails supported,
-  sprite-sheet only).
-- **Phase 4 (partial):** public API/events/types are stable; a full docs
-  site, expanded automated test coverage (visual regression, real-device
-  matrix), and npm/CDN release automation are follow-up work.
-- **Phase 5 (not started):** playlists, chapters, casting, framework
-  wrappers, DASH/DRM/ads as optional modules.
+- **Visual-regression tests and a real-device matrix.** CI runs unit tests
+  plus a real-Chromium smoke suite; screenshot diffing and a device farm
+  would go further.
+- **WASM soft-decoding** for codecs no browser ships (DivX, MPEG-2, AC-3).
+  Deliberately not done: a decoder would cost more bytes than the entire
+  player, so those files are detected and reported instead.
+- **Bitmap subtitles** (VOBSUB, PGS) in MKV need an image-rendering path;
+  only text-based tracks become text tracks today.
+- **A native core with language bindings**, per the PRD's long-term
+  section — out of scope for a web player.
 
-Known gaps in the remux layer, listed plainly:
+### Known limits, stated plainly
 
-- **Seeking within remuxed MKV** is limited to what's already buffered.
-  Random access would need Cues-index parsing plus ranged refetching.
-- **AVI, WMV/ASF, FLV, MPEG-PS** are detected but not demuxed. Their codecs
-  (DivX, WMV, VP6) are mostly undecodable in browsers anyway, so a demuxer
-  alone wouldn't make them play.
-- **VP9-in-MKV** synthesizes its `vpcC` from track metadata using profile 0
-  / 8-bit / 4:2:0 defaults, since Matroska usually stores no CodecPrivate
-  for VP9. Non-profile-0 VP9 (10-bit, 4:4:4) may be misdescribed.
-- **Bitmap subtitles** (VOBSUB, PGS) in MKV are skipped; only text-based
-  subtitle tracks become text tracks.
+- Seeking a remuxed MKV uses the file's Cues index; files muxed without
+  one fall back to seeking within buffered ranges.
+- MKV audio-track switching rebuilds the MediaSource, which re-reads the
+  file. HLS/DASH switching is cheap; this isn't.
+- VP9-in-MKV synthesizes its `vpcC` with profile-0 / 8-bit / 4:2:0
+  defaults, since Matroska usually stores no CodecPrivate for VP9.
+- The ads plugin covers linear VAST only — no VPAID (it executes
+  third-party code in your page), companions, or non-linear overlays.
 
 ## License
 

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Theming — Lumen</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar"></aside>
+      <main>
+<h1>Theming</h1>
+<p class="lede">Every visual token is a CSS custom property with a
+documented fallback, overridable from page-level CSS without piercing the
+shadow root.</p>
+
+<h2>Built-in themes</h2>
+<pre><code>&lt;lumen-player theme="dark"&gt;&lt;/lumen-player&gt;    &lt;!-- default --&gt;
+&lt;lumen-player theme="light"&gt;&lt;/lumen-player&gt;
+&lt;lumen-player theme="system"&gt;&lt;/lumen-player&gt;  &lt;!-- follows prefers-color-scheme --&gt;</code></pre>
+
+<h2>Custom skin</h2>
+<pre><code>lumen-player {
+  --lumen-color-accent: #7c5cff;
+  --lumen-color-surface: rgba(20, 20, 28, 0.8);
+  --lumen-radius: 20px;
+  --lumen-font-family: "Inter", sans-serif;
+}</code></pre>
+
+<h2>Tokens</h2>
+<table>
+  <tr><th>Token</th><th>Purpose</th></tr>
+  <tr><td><code>--lumen-color-accent</code></td><td>Progress fill, active menu items, focus ring</td></tr>
+  <tr><td><code>--lumen-color-surface</code></td><td>Control bar and menu background</td></tr>
+  <tr><td><code>--lumen-color-text</code></td><td>Icons and labels</td></tr>
+  <tr><td><code>--lumen-color-text-muted</code></td><td>Timecodes, secondary values</td></tr>
+  <tr><td><code>--lumen-color-track</code></td><td>Unplayed portion of the scrub bar</td></tr>
+  <tr><td><code>--lumen-color-buffered</code></td><td>Buffered portion</td></tr>
+  <tr><td><code>--lumen-radius</code></td><td>Outer corner radius</td></tr>
+  <tr><td><code>--lumen-aspect-ratio</code></td><td>Player aspect ratio (or the attribute)</td></tr>
+  <tr><td><code>--lumen-object-fit</code></td><td><code>contain</code> or <code>cover</code></td></tr>
+  <tr><td><code>--lumen-transition-fast</code></td><td>Hover and press transitions</td></tr>
+</table>
+
+<h2>Shadow parts</h2>
+<p>For changes tokens can't express, the internals are exposed as parts:</p>
+<pre><code>lumen-player::part(controls) { backdrop-filter: blur(20px); }
+lumen-player::part(button)   { border-radius: 4px; }</code></pre>
+<p>Available parts: <code>root</code>, <code>media</code>,
+<code>controls</code>, <code>progress</code>, <code>button</code>,
+<code>menu</code>, <code>captions</code>, <code>poster</code>,
+<code>spinner</code>, <code>error</code>, <code>big-play</code>.</p>
+
+<h2>Reduced motion</h2>
+<p>All transitions collapse to zero under
+<code>prefers-reduced-motion: reduce</code>, and ambient mode disables
+itself entirely.</p>
+      </main>
+    </div>
+    <script type="module" src="./nav.js"></script>
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>

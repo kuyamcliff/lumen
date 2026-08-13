@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ads — Lumen</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar"></aside>
+      <main>
+<h1>Ads</h1>
+<p class="lede">VAST 2–4 linear ads — pre-roll, mid-roll and post-roll —
+as an optional plugin that isn't in the core bundle.</p>
+
+<pre><code>import { ads } from "@lumen/player/plugins/ads";
+
+player.use(ads({ tagUrl: "https://ads.example/vast.xml" }));</code></pre>
+
+<h2>Scheduling breaks</h2>
+<pre><code>player.use(ads({
+  breaks: [
+    { offset: "pre",  tagUrl: "https://ads.example/pre.xml" },
+    { offset: 300,    tagUrl: "https://ads.example/mid.xml" },  // 5 minutes in
+    { offset: "post", tagUrl: "https://ads.example/post.xml" },
+  ],
+}));</code></pre>
+
+<h2>Options</h2>
+<table>
+  <tr><th>Option</th><th>Default</th><th>Meaning</th></tr>
+  <tr><td><code>timeoutMs</code></td><td>8000</td><td>How long to wait for a VAST response before skipping the break</td></tr>
+  <tr><td><code>maxRedirects</code></td><td>3</td><td>Wrapper redirects to follow</td></tr>
+  <tr><td><code>skipText</code></td><td>"Skip ad"</td><td>Skip button label once skippable</td></tr>
+  <tr><td><code>skipCountdownText</code></td><td>"Skip in {seconds}s"</td><td>Countdown label</td></tr>
+  <tr><td><code>adLabel</code></td><td>"Ad"</td><td>Corner badge text</td></tr>
+</table>
+
+<h2>How it plays</h2>
+<p>Ads play in a <strong>separate video element</strong> stacked over the
+player, rather than by swapping the content source. That keeps the
+content's buffer, position and decoder state untouched, so returning from
+an ad is instant instead of a re-buffer — and a broken ad can never
+corrupt the content's playback state.</p>
+
+<div class="note">
+An ad that fails to load, times out, or is blocked by autoplay policy
+returns control to the content immediately. Ads must never be able to
+prevent someone watching the video they came for.
+</div>
+
+<h2>What's supported</h2>
+<ul>
+  <li>VAST 2, 3 and 4 linear creatives</li>
+  <li>Wrapper redirects, with the wrapper's beacons merged into the wrapped ad's</li>
+  <li>Impression, start, quartile, complete and skip tracking</li>
+  <li>Click-through with click tracking</li>
+  <li><code>skipoffset</code> as a timestamp or a percentage</li>
+  <li>Media-file selection by codec support and player size</li>
+</ul>
+<p>Companion banners, non-linear overlays and VPAID are out of scope —
+VPAID in particular executes third-party code inside your page.</p>
+      </main>
+    </div>
+    <script type="module" src="./nav.js"></script>
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>

@@ -1,16 +1,29 @@
 import type HlsType from "hls.js";
 import type { ErrorData } from "hls.js";
 import type { EventEmitter } from "./EventEmitter";
-import type { LumenError, LumenQualityLevel, LumenSource, LumenSourceType } from "../types";
+import type { LumenAudioTrack, LumenError, LumenQualityLevel, LumenSource, LumenSourceType } from "../types";
 import { RETRY_BACKOFF_MS, delay } from "../utils/retry";
 import { ResilientMp4Engine } from "./ResilientMp4Engine";
 import { containerLabel, probeContainer, type ContainerKind } from "./containers";
 import type { MatroskaRemuxEngine } from "../remux/MatroskaRemuxEngine";
+import type { DashEngine } from "./DashEngine";
+import type { FlvRemuxEngine } from "../remux/FlvRemuxEngine";
+import type { DrmController } from "./DrmController";
 
 declare global {
   interface Window {
     Hls?: typeof HlsType;
   }
+}
+
+/**
+ * Minimal shape of the `AudioTrackList` API. TypeScript's DOM lib omits it
+ * because support is uneven (Safari implements it; Chrome does not), but
+ * where it exists it's the only way to switch audio on native playback.
+ */
+interface AudioTrackListLike {
+  readonly length: number;
+  [index: number]: { id: string; label: string; language: string; enabled: boolean };
 }
 
 // WHATWG MediaError codes (https://html.spec.whatwg.org/#error-codes), used
@@ -33,6 +46,8 @@ const EXTENSION_TYPES: Array<[RegExp, LumenSourceType]> = [
   [/\.mkv($|\?)/i, "mkv"],
   [/\.mka($|\?)/i, "mkv"],
   [/\.(ts|m2ts|mts)($|\?)/i, "ts"],
+  [/\.mpd($|\?)/i, "dash"],
+  [/\.flv($|\?)/i, "flv"],
 ];
 
 function detectType(source: LumenSource): LumenSourceType {
@@ -92,6 +107,8 @@ function loadHlsCtor(): Promise<typeof HlsType | null> {
 export interface PlaybackEngineOptions {
   /** Force a specific engine instead of auto-detecting. Mostly for tests. */
   forceEngine?: "native" | "hlsjs";
+  /** Supplies DRM configuration to whichever pipeline ends up playing. */
+  drm?: () => DrmController | null;
 }
 
 /**
@@ -112,6 +129,8 @@ export class PlaybackEngine {
   private _isHls = false;
   private resilientEngine: ResilientMp4Engine | null = null;
   private matroskaEngine: MatroskaRemuxEngine | null = null;
+  private dashEngine: DashEngine | null = null;
+  private flvEngine: FlvRemuxEngine | null = null;
   private triedResilient = false;
   private currentContainer: ContainerKind | null = null;
   /** Incremented on every load() so a slow async probe can't apply to a newer source. */
@@ -135,23 +154,102 @@ export class PlaybackEngine {
   }
 
   get qualityLevels(): LumenQualityLevel[] {
+    if (this.dashEngine) return this.dashEngine.qualityLevels;
     return this._qualityLevels;
   }
 
   get currentQuality(): LumenQualityLevel | null {
+    if (this.dashEngine) return this.dashEngine.currentQuality;
     if (!this.hls || this.hls.currentLevel < 0) return null;
     return this._qualityLevels.find((l) => l.id === this.hls?.currentLevel) ?? null;
   }
 
   get isAutoQuality(): boolean {
+    if (this.dashEngine) return this.dashEngine.isAutoQuality;
     return !this.hls || this.hls.currentLevel === -1;
   }
 
+  /** True when an adaptive engine (HLS or DASH) is driving playback. */
+  get isAdaptive(): boolean {
+    return this._isHls || this.dashEngine !== null;
+  }
+
   setQuality(id: number | "auto"): void {
+    if (this.dashEngine) {
+      this.dashEngine.setQuality(id);
+      return;
+    }
     if (!this.hls) return;
     this.hls.currentLevel = id === "auto" ? -1 : id;
     const level = id === "auto" ? null : this._qualityLevels.find((l) => l.id === id) ?? null;
     this.emitter.emit("qualitychange", { level, auto: id === "auto" });
+  }
+
+  /**
+   * Audio tracks from whichever pipeline is driving playback: hls.js for
+   * adaptive streams, the element's own `audioTracks` where the browser
+   * implements it (Safari), or the Matroska remuxer for MKV.
+   */
+  get audioTracks(): LumenAudioTrack[] {
+    if (this.hls) {
+      return this.hls.audioTracks.map((track, index) => ({
+        id: String(track.id ?? index),
+        label: track.name || track.lang || `Track ${index + 1}`,
+        language: track.lang ?? "",
+        active: this.hls?.audioTrack === (track.id ?? index),
+      }));
+    }
+
+    if (this.dashEngine) return this.dashEngine.audioTracks;
+    if (this.matroskaEngine) return this.matroskaEngine.audioTracks;
+
+    const native = (this.video as HTMLVideoElement & { audioTracks?: AudioTrackListLike }).audioTracks;
+    if (native && native.length > 0) {
+      return Array.from({ length: native.length }, (_, index) => {
+        const track = native[index]!;
+        return {
+          id: track.id || String(index),
+          label: track.label || track.language || `Track ${index + 1}`,
+          language: track.language ?? "",
+          active: track.enabled,
+        };
+      });
+    }
+
+    return [];
+  }
+
+  setAudioTrack(id: string): void {
+    if (this.dashEngine) {
+      this.dashEngine.setAudioTrack(id);
+      this.emitAudioTrackChange(id);
+      return;
+    }
+    if (this.hls) {
+      const index = this.hls.audioTracks.findIndex((track, i) => String(track.id ?? i) === id);
+      if (index >= 0) this.hls.audioTrack = this.hls.audioTracks[index]!.id ?? index;
+      this.emitAudioTrackChange(id);
+      return;
+    }
+
+    if (this.matroskaEngine) {
+      void this.matroskaEngine.selectAudioTrack(id).then(() => this.emitAudioTrackChange(id));
+      return;
+    }
+
+    const native = (this.video as HTMLVideoElement & { audioTracks?: AudioTrackListLike }).audioTracks;
+    if (native) {
+      for (let i = 0; i < native.length; i++) {
+        const track = native[i]!;
+        track.enabled = (track.id || String(i)) === id;
+      }
+      this.emitAudioTrackChange(id);
+    }
+  }
+
+  private emitAudioTrackChange(id: string): void {
+    const track = this.audioTracks.find((t) => t.id === id) ?? null;
+    this.emitter.emit("audiotrackchange", { track });
   }
 
   async load(sources: LumenSource[]): Promise<void> {
@@ -159,6 +257,8 @@ export class PlaybackEngine {
     this.teardownHls();
     this.teardownResilient();
     this.teardownMatroska();
+    this.teardownDash();
+    this.teardownFlv();
     this._qualityLevels = [];
     this.retryAttempt = 0;
     this.triedResilient = false;
@@ -177,6 +277,11 @@ export class PlaybackEngine {
 
     if (type === "hls") {
       await this.loadHls(best.src);
+      return;
+    }
+
+    if (type === "dash") {
+      await this.loadDash(best.src);
       return;
     }
 
@@ -213,6 +318,10 @@ export class PlaybackEngine {
         await this.loadTransportStream(src);
         return;
 
+      case "flv":
+        await this.loadFlv(src, token);
+        return;
+
       case "iso-bmff":
       case "webm":
       case "ogg":
@@ -229,6 +338,44 @@ export class PlaybackEngine {
           `${containerLabel(container)} files can't be played in a browser. Converting this to MP4 or WebM will fix it.`,
         );
     }
+  }
+
+  /** Plays FLV by remuxing to fragmented MP4 — Flash is gone, its files aren't. */
+  private async loadFlv(src: string, token: number): Promise<void> {
+    const { FlvRemuxEngine } = await import("../remux/FlvRemuxEngine");
+    if (this.destroyed || token !== this.loadToken) return;
+
+    const engine = new FlvRemuxEngine(this.video, this.emitter);
+    this.flvEngine = engine;
+
+    const ok = await engine.attempt(src);
+    if (this.destroyed || token !== this.loadToken) return;
+    if (!ok) {
+      this.teardownFlv();
+      this.emitFatal(
+        "CONTAINER_UNSUPPORTED",
+        "This FLV file couldn't be played. Its codecs may not be supported by your browser.",
+      );
+    }
+  }
+
+  /** Plays an MPEG-DASH manifest through dash.js. */
+  private async loadDash(src: string): Promise<void> {
+    const { DashEngine } = await import("./DashEngine");
+    if (this.destroyed) return;
+
+    const engine = new DashEngine(this.video, this.emitter);
+    const loaded = await engine.load(src, this.options.drm?.() ?? null);
+    if (this.destroyed) return;
+
+    if (!loaded) {
+      this.emitFatal(
+        "SRC_NOT_SUPPORTED",
+        "DASH playback requires dash.js. Include it via a script tag or install it as a dependency.",
+      );
+      return;
+    }
+    this.dashEngine = engine;
   }
 
   /** Plays Matroska by remuxing to fragmented MP4 — no browser plays it directly. */
@@ -314,10 +461,12 @@ export class PlaybackEngine {
   /** Creates an hls.js instance, wires its events, and points it at a manifest. */
   private attachHls(HlsCtor: typeof HlsType, manifestUrl: string): void {
     this._isHls = true;
+    const drm = this.options.drm?.() ?? null;
     const hls = new HlsCtor({
       enableWorker: true,
       lowLatencyMode: true,
       backBufferLength: 90,
+      ...(drm?.isConfigured ? { drmSystems: drm.toHlsConfig(), emeEnabled: true } : {}),
     });
     this.hls = hls;
 
@@ -505,6 +654,16 @@ export class PlaybackEngine {
     this.matroskaEngine = null;
   }
 
+  private teardownDash(): void {
+    this.dashEngine?.destroy();
+    this.dashEngine = null;
+  }
+
+  private teardownFlv(): void {
+    this.flvEngine?.destroy();
+    this.flvEngine = null;
+  }
+
   destroy(): void {
     this.destroyed = true;
     this.video.removeEventListener("error", this.boundOnVideoError);
@@ -513,5 +672,7 @@ export class PlaybackEngine {
     this.teardownHls();
     this.teardownResilient();
     this.teardownMatroska();
+    this.teardownDash();
+    this.teardownFlv();
   }
 }

@@ -1,7 +1,10 @@
 import type { EventEmitter } from "../core/EventEmitter";
 import type { PlaybackEngine } from "../core/PlaybackEngine";
 import type { SubtitleManager } from "../subtitles/SubtitleManager";
-import type { LumenError, LumenQualityLevel } from "../types";
+import type { ChapterManager } from "../media/ChapterManager";
+import type { CastController } from "../media/CastController";
+import type { Translator } from "../i18n";
+import type { LumenError } from "../types";
 import { bufferedEnd, clamp, formatTime } from "../utils/time";
 import { isCoarsePointer } from "../utils/dom";
 import { icon } from "./icons";
@@ -9,7 +12,16 @@ import { ThumbnailTrack } from "./Thumbnails";
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 const IDLE_MS = 2600;
-type MenuView = "root" | "speed" | "quality" | "captions" | "appearance";
+type MenuView = "root" | "speed" | "quality" | "captions" | "appearance" | "audio" | "chapters";
+
+/** Playlist state the controls need, without coupling them to the player. */
+export interface PlaylistBridge {
+  hasPlaylist(): boolean;
+  hasNext(): boolean;
+  hasPrevious(): boolean;
+  next(): void;
+  previous(): void;
+}
 
 export interface ControlsControllerOptions {
   root: HTMLElement;
@@ -18,6 +30,10 @@ export interface ControlsControllerOptions {
   emitter: EventEmitter;
   engine: PlaybackEngine;
   subtitles: SubtitleManager;
+  chapters: ChapterManager;
+  cast: CastController;
+  strings: Translator;
+  playlist: PlaylistBridge;
   retry: () => void;
 }
 
@@ -35,6 +51,10 @@ export class ControlsController {
   private emitter: EventEmitter;
   private engine: PlaybackEngine;
   private subtitles: SubtitleManager;
+  private chapters: ChapterManager;
+  private cast: CastController;
+  private strings: Translator;
+  private playlist: PlaylistBridge;
   private retryAction: () => void;
 
   private els: {
@@ -51,9 +71,14 @@ export class ControlsController {
     preview: HTMLElement;
     previewImg: HTMLImageElement;
     previewTime: HTMLElement;
+    previewChapter: HTMLElement;
+    chapterMarks: HTMLElement;
     time: HTMLElement;
     volumeInput: HTMLInputElement;
     captions: HTMLElement;
+    castButton: HTMLElement;
+    nextButton: HTMLElement;
+    previousButton: HTMLElement;
     menu: HTMLElement;
     announcer: HTMLElement;
   };
@@ -74,6 +99,10 @@ export class ControlsController {
     this.emitter = opts.emitter;
     this.engine = opts.engine;
     this.subtitles = opts.subtitles;
+    this.chapters = opts.chapters;
+    this.cast = opts.cast;
+    this.strings = opts.strings;
+    this.playlist = opts.playlist;
     this.retryAction = opts.retry;
 
     this.els = {
@@ -90,9 +119,14 @@ export class ControlsController {
       preview: $(this.root, '[data-el="preview"]'),
       previewImg: $(this.root, '[data-el="preview-img"]') as HTMLImageElement,
       previewTime: $(this.root, '[data-el="preview-time"]'),
+      previewChapter: $(this.root, '[data-el="preview-chapter"]'),
+      chapterMarks: $(this.root, '[data-el="chapter-marks"]'),
       time: $(this.root, '[data-el="time"]'),
       volumeInput: $(this.root, '[data-el="volume"]') as HTMLInputElement,
       captions: $(this.root, '[data-action="captions-toggle"]'),
+      castButton: $(this.root, '[data-action="cast"]'),
+      nextButton: $(this.root, '[data-action="next"]'),
+      previousButton: $(this.root, '[data-action="previous"]'),
       menu: $(this.root, '[data-el="menu"]'),
       announcer: $(this.root, '[data-el="announcer"]'),
     };
@@ -105,11 +139,79 @@ export class ControlsController {
     this.bindKeyboard();
     this.bindEngineEvents();
     this.bindSubtitleEvents();
+    this.bindChapterEvents();
     this.updatePipSupport();
     this.updateFullscreenIcon();
+    this.applyStaticLabels();
+    this.refreshPlaylistButtons();
 
     document.addEventListener("click", this.boundOutsideClick, true);
     document.addEventListener("fullscreenchange", () => this.onFullscreenChange());
+  }
+
+  /** Applies translated labels to controls whose text never changes at runtime. */
+  private applyStaticLabels(): void {
+    const label = (selector: string, key: Parameters<Translator["t"]>[0]) => {
+      this.root.querySelector(selector)?.setAttribute("aria-label", this.strings.t(key));
+    };
+    label('[data-el="progress"]', "seek");
+    label('[data-el="volume"]', "volume");
+    label(".lumen-spinner", "loading");
+    label('[data-action="captions-toggle"]', "captions");
+    label('[data-action="settings"]', "settings");
+    label('[data-action="pip"]', "pictureInPicture");
+    label('[data-action="cast"]', "cast");
+    label('[data-action="next"]', "next");
+    label('[data-action="previous"]', "previous");
+
+    const retry = this.root.querySelector('[data-action="retry"]');
+    if (retry) retry.innerHTML = `${icon("refresh")} ${this.strings.t("tryAgain")}`;
+  }
+
+  /** Shows the next/previous buttons only when a playlist actually offers somewhere to go. */
+  refreshPlaylistButtons(): void {
+    const hasPlaylist = this.playlist.hasPlaylist();
+    this.els.nextButton.hidden = !hasPlaylist;
+    this.els.previousButton.hidden = !hasPlaylist;
+    this.els.nextButton.toggleAttribute("disabled", !this.playlist.hasNext());
+    this.els.previousButton.toggleAttribute("disabled", !this.playlist.hasPrevious());
+  }
+
+  private activeChapterStart: number | null = null;
+
+  /** Emits `chapterchange` when playback moves into a different chapter. */
+  private checkChapterBoundary(): void {
+    const chapter = this.chapters.chapterAt(this.video.currentTime);
+    const start = chapter?.start ?? null;
+    if (start === this.activeChapterStart) return;
+    this.activeChapterStart = start;
+    this.emitter.emit("chapterchange", { chapter });
+  }
+
+  private bindChapterEvents(): void {
+    this.emitter.on("chapterschange", () => this.renderChapterMarks());
+    this.emitter.on("castavailabilitychange", ({ available }) => {
+      this.els.castButton.hidden = !available;
+    });
+  }
+
+  /** Draws a divider at each chapter boundary along the progress bar. */
+  private renderChapterMarks(): void {
+    const chapters = this.chapters.chapters;
+    const duration = this.video.duration;
+    this.els.chapterMarks.replaceChildren();
+    if (chapters.length < 2 || !Number.isFinite(duration) || duration <= 0) return;
+
+    const fragment = document.createDocumentFragment();
+    // The first chapter starts at 0, so its divider would sit on the very
+    // edge of the bar; skip it.
+    for (const chapter of chapters.slice(1)) {
+      const mark = document.createElement("div");
+      mark.className = "lumen-chapter-mark";
+      mark.style.left = `${clamp((chapter.start / duration) * 100, 0, 100)}%`;
+      fragment.appendChild(mark);
+    }
+    this.els.chapterMarks.appendChild(fragment);
   }
 
   // ---------------------------------------------------------------- video
@@ -133,6 +235,7 @@ export class ControlsController {
     v.addEventListener("timeupdate", () => {
       this.updateProgress();
       this.emitter.emit("timeupdate", { currentTime: v.currentTime, duration: v.duration || 0 });
+      this.checkChapterBoundary();
     });
     v.addEventListener("progress", () => {
       this.updateBuffered();
@@ -161,7 +264,11 @@ export class ControlsController {
     v.addEventListener("loadedmetadata", () => {
       this.emitter.emit("loadedmetadata", { duration: v.duration || 0 });
       this.updateProgress();
+      // Chapter positions are percentages of the duration, so they can't be
+      // placed until the duration is known.
+      this.renderChapterMarks();
     });
+    v.addEventListener("durationchange", () => this.renderChapterMarks());
     v.addEventListener("enterpictureinpicture", () => {
       this.emitter.emit("enterpip", undefined);
     });
@@ -180,16 +287,16 @@ export class ControlsController {
   private setPlayingUi(playing: boolean): void {
     const svg = playing ? icon("pause") : icon("play");
     this.els.bigPlay.innerHTML = svg;
-    this.els.bigPlay.setAttribute("aria-label", playing ? "Pause" : "Play");
+    this.els.bigPlay.setAttribute("aria-label", this.strings.t(playing ? "pause" : "play"));
     this.els.bigPlay.hidden = playing;
     const playBtn = $(this.root, '.lumen-row [data-action="play-pause"]');
     playBtn.innerHTML = svg;
-    playBtn.setAttribute("aria-label", playing ? "Pause" : "Play");
+    playBtn.setAttribute("aria-label", this.strings.t(playing ? "pause" : "play"));
     if (playing) {
       this.els.poster.hidden = true;
-      this.announce("Playing");
+      this.announce(this.strings.t("playing"));
     } else {
-      this.announce("Paused");
+      this.announce(this.strings.t("paused"));
     }
   }
 
@@ -213,6 +320,17 @@ export class ControlsController {
           break;
         case "pip":
           this.togglePip();
+          break;
+        case "cast":
+          void this.cast.prompt().then((shown) => {
+            if (!shown) this.announce(this.strings.t("castUnavailable"));
+          });
+          break;
+        case "next":
+          this.playlist.next();
+          break;
+        case "previous":
+          this.playlist.previous();
           break;
         case "fullscreen":
           this.toggleFullscreen();
@@ -243,7 +361,7 @@ export class ControlsController {
 
   private togglePlay(): void {
     if (this.video.paused || this.video.ended) {
-      this.video.play().catch(() => this.announce("Playback was blocked by the browser"));
+      this.video.play().catch(() => this.announce(this.strings.t("playbackBlocked")));
     } else {
       this.video.pause();
     }
@@ -267,6 +385,10 @@ export class ControlsController {
       this.els.preview.style.left = `${x}px`;
       this.els.preview.classList.add("is-visible");
       this.els.previewTime.textContent = formatTime(time);
+
+      const chapter = this.chapters.chapterAt(time);
+      this.els.previewChapter.hidden = !chapter?.title;
+      if (chapter?.title) this.els.previewChapter.textContent = chapter.title;
 
       if (this.thumbnails?.isReady) {
         const cue = this.thumbnails.cueAt(time);
@@ -380,7 +502,7 @@ export class ControlsController {
     const muteBtn = $(this.root, '[data-action="mute"]');
     const iconName = muted || volume === 0 ? "volume-mute" : volume < 0.5 ? "volume-low" : "volume-high";
     muteBtn.innerHTML = icon(iconName);
-    muteBtn.setAttribute("aria-label", muted ? "Unmute" : "Mute");
+    muteBtn.setAttribute("aria-label", this.strings.t(muted ? "unmute" : "mute"));
     muteBtn.setAttribute("aria-pressed", String(muted));
   }
 
@@ -392,7 +514,7 @@ export class ControlsController {
     // playback starts, so the captions button has to re-evaluate then.
     this.emitter.on("embeddedtexttrack", ({ track }) => {
       this.refreshCaptionsButton();
-      this.announce(`Subtitles available: ${track.label || track.language}`);
+      this.announce(this.strings.t("subtitlesAvailable", track.label || track.language));
     });
     this.refreshCaptionsButton();
   }
@@ -407,12 +529,12 @@ export class ControlsController {
   private toggleCaptionsQuick(): void {
     if (this.subtitles.current) {
       this.subtitles.setActiveTrack(null);
-      this.announce("Captions off");
+      this.announce(this.strings.t("captionsOff"));
     } else {
       const first = this.subtitles.tracks[0];
       if (first) {
         this.subtitles.setActiveTrack(first);
-        this.announce(`Captions: ${first.label || first.language}`);
+        this.announce(this.strings.t("captionsAnnouncement", first.label || first.language));
       }
     }
   }
@@ -432,7 +554,7 @@ export class ControlsController {
         await this.video.requestPictureInPicture();
       }
     } catch {
-      this.announce("Picture-in-picture isn't available right now");
+      this.announce(this.strings.t("pipUnavailable"));
     }
   }
 
@@ -444,7 +566,7 @@ export class ControlsController {
         await this.host.requestFullscreen();
       }
     } catch {
-      this.announce("Fullscreen isn't available right now");
+      this.announce(this.strings.t("fullscreenUnavailable"));
     }
   }
 
@@ -458,7 +580,7 @@ export class ControlsController {
     const btn = $(this.root, '[data-action="fullscreen"]');
     const isFs = document.fullscreenElement === this.host;
     btn.innerHTML = icon(isFs ? "fullscreen-exit" : "fullscreen");
-    btn.setAttribute("aria-label", isFs ? "Exit fullscreen" : "Fullscreen");
+    btn.setAttribute("aria-label", this.strings.t(isFs ? "exitFullscreen" : "fullscreen"));
   }
 
   // -------------------------------------------------------------- errors
@@ -520,18 +642,38 @@ export class ControlsController {
     );
 
     if (this.menuView === "root") {
-      menu.appendChild(this.menuRow("gauge", `Speed`, `${this.video.playbackRate}×`, "open-speed"));
+      const rate = this.video.playbackRate;
+      const rateLabel = rate === 1 ? this.strings.t("normalSpeed") : `${rate}×`;
+      menu.appendChild(this.menuRow(this.strings.t("speed"), rateLabel, "open-speed"));
+
       const quality = this.engine.currentQuality;
-      const qualityLabel = this.engine.isHls
-        ? this.engine.isAutoQuality
-          ? `Auto${quality ? ` (${quality.label})` : ""}`
-          : quality?.label ?? "Auto"
-        : "";
+      const qualityLabel = this.engine.isAutoQuality
+        ? `${this.strings.t("auto")}${quality ? ` (${quality.label})` : ""}`
+        : quality?.label ?? this.strings.t("auto");
       if (this.engine.isHls && this.engine.qualityLevels.length > 0) {
-        menu.appendChild(this.menuRow("settings", "Quality", qualityLabel, "open-quality"));
+        menu.appendChild(this.menuRow(this.strings.t("quality"), qualityLabel, "open-quality"));
       }
+
+      const audioTracks = this.engine.audioTracks;
+      if (audioTracks.length > 1) {
+        const active = audioTracks.find((track) => track.active);
+        menu.appendChild(this.menuRow(this.strings.t("audio"), active?.label ?? "", "open-audio"));
+      }
+
+      const chapters = this.chapters.chapters;
+      if (chapters.length > 0) {
+        const current = this.chapters.chapterAt(this.video.currentTime);
+        menu.appendChild(this.menuRow(this.strings.t("chapters"), current?.title ?? "", "open-chapters"));
+      }
+
       if (this.subtitles.tracks.length > 0) {
-        menu.appendChild(this.menuRow("captions", "Captions", this.subtitles.current?.label ?? "Off", "open-captions"));
+        menu.appendChild(
+          this.menuRow(
+            this.strings.t("captions"),
+            this.subtitles.current?.label ?? this.strings.t("off"),
+            "open-captions",
+          ),
+        );
       }
       return;
     }
@@ -540,12 +682,11 @@ export class ControlsController {
 
     if (this.menuView === "speed") {
       for (const speed of SPEEDS) {
-        menu.appendChild(
-          this.menuItem(`${speed}×`, this.video.playbackRate === speed, "set-speed", String(speed)),
-        );
+        const label = speed === 1 ? this.strings.t("normalSpeed") : `${speed}×`;
+        menu.appendChild(this.menuItem(label, this.video.playbackRate === speed, "set-speed", String(speed)));
       }
     } else if (this.menuView === "quality") {
-      menu.appendChild(this.menuItem("Auto", this.engine.isAutoQuality, "set-quality", "auto"));
+      menu.appendChild(this.menuItem(this.strings.t("auto"), this.engine.isAutoQuality, "set-quality", "auto"));
       for (const level of this.engine.qualityLevels) {
         menu.appendChild(
           this.menuItem(
@@ -556,35 +697,61 @@ export class ControlsController {
           ),
         );
       }
+    } else if (this.menuView === "audio") {
+      for (const track of this.engine.audioTracks) {
+        menu.appendChild(this.menuItem(track.label, track.active, "set-audio", track.id));
+      }
+    } else if (this.menuView === "chapters") {
+      const current = this.chapters.chapterAt(this.video.currentTime);
+      this.chapters.chapters.forEach((chapter, index) => {
+        const item = this.menuItem(
+          chapter.title || `${index + 1}`,
+          current?.start === chapter.start,
+          "seek-chapter",
+          String(chapter.start),
+        );
+        // Chapter rows carry their start time, which is the one piece of
+        // context that makes a long chapter list scannable.
+        const time = document.createElement("span");
+        time.style.cssText = "color:var(--lumen-color-text-muted);font-variant-numeric:tabular-nums";
+        time.textContent = formatTime(chapter.start);
+        item.appendChild(time);
+        menu.appendChild(item);
+      });
     } else if (this.menuView === "captions") {
-      menu.appendChild(this.menuItem("Off", !this.subtitles.current, "set-track", "off"));
+      menu.appendChild(this.menuItem(this.strings.t("off"), !this.subtitles.current, "set-track", "off"));
       this.subtitles.tracks.forEach((t, i) => {
         menu.appendChild(this.menuItem(t.label || t.language || `Track ${i + 1}`, this.subtitles.current === t, "set-track", String(i)));
       });
       if (this.subtitles.current) {
-        menu.appendChild(this.menuRow("settings", "Appearance", "", "open-appearance"));
+        menu.appendChild(this.menuRow(this.strings.t("appearance"), "", "open-appearance"));
       }
     } else if (this.menuView === "appearance") {
-      menu.appendChild(this.sizeRow());
-      menu.appendChild(this.appearanceOptionRow("Background", ["Solid", "Off"], (v) =>
-        this.subtitles.setPrefs({ backgroundOpacity: v === "Solid" ? 0.6 : 0 }),
-      ));
+      const t = this.strings;
       menu.appendChild(
-        this.appearanceOptionRow("Edge", ["Drop shadow", "Outline", "None"], (v) =>
-          this.subtitles.setPrefs({
-            edge: v === "Drop shadow" ? "drop-shadow" : v === "Outline" ? "outline" : "none",
-          }),
+        this.appearanceOptionRow(t.t("subtitleSize"), [t.t("small"), t.t("medium"), t.t("large")], (index) =>
+          this.subtitles.setPrefs({ fontSize: [0.8, 1, 1.3][index] ?? 1 }),
         ),
       );
       menu.appendChild(
-        this.appearanceOptionRow("Position", ["Bottom", "Top"], (v) =>
-          this.subtitles.setPrefs({ position: v === "Bottom" ? "bottom" : "top" }),
+        this.appearanceOptionRow(t.t("subtitleBackground"), [t.t("solid"), t.t("off")], (index) =>
+          this.subtitles.setPrefs({ backgroundOpacity: index === 0 ? 0.6 : 0 }),
+        ),
+      );
+      menu.appendChild(
+        this.appearanceOptionRow(t.t("subtitleEdge"), [t.t("dropShadow"), t.t("outline"), t.t("none")], (index) =>
+          this.subtitles.setPrefs({ edge: (["drop-shadow", "outline", "none"] as const)[index] ?? "none" }),
+        ),
+      );
+      menu.appendChild(
+        this.appearanceOptionRow(t.t("subtitlePosition"), [t.t("bottom"), t.t("top")], (index) =>
+          this.subtitles.setPrefs({ position: index === 0 ? "bottom" : "top" }),
         ),
       );
     }
   }
 
-  private menuRow(iconName: Parameters<typeof icon>[0], label: string, value: string, action: string): HTMLElement {
+  private menuRow(label: string, value: string, action: string): HTMLElement {
     const row = document.createElement("button");
     row.className = "lumen-menu-item";
     row.dataset.menuAction = action;
@@ -597,7 +764,7 @@ export class ControlsController {
     const row = document.createElement("button");
     row.className = "lumen-menu-item lumen-menu-back";
     row.dataset.menuAction = "back";
-    row.innerHTML = `${icon("chevronLeft")} Back`;
+    row.innerHTML = `${icon("chevronLeft")} ${this.strings.t("back")}`;
     return row;
   }
 
@@ -612,33 +779,37 @@ export class ControlsController {
     return item;
   }
 
-  private sizeRow(): HTMLElement {
-    return this.appearanceOptionRow("Size", ["Small", "Medium", "Large"], (v) =>
-      this.subtitles.setPrefs({ fontSize: v === "Small" ? 0.8 : v === "Large" ? 1.3 : 1 }),
-    );
-  }
-
-  private appearanceOptionRow(label: string, options: string[], onPick: (value: string) => void): HTMLElement {
+  /**
+   * A labelled row of choices. `onPick` receives the option's index rather
+   * than its text, so the handler keeps working under translation.
+   */
+  private appearanceOptionRow(
+    label: string,
+    options: string[],
+    onPick: (index: number) => void,
+  ): HTMLElement {
     const row = document.createElement("div");
     row.className = "lumen-menu-row";
     const title = document.createElement("span");
     title.textContent = label;
     row.appendChild(title);
+
     const group = document.createElement("div");
     group.style.display = "flex";
     group.style.gap = "4px";
-    for (const opt of options) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.textContent = opt;
-      btn.style.cssText =
+    options.forEach((option, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = option;
+      button.style.cssText =
         "all:unset;cursor:pointer;font-size:0.75rem;padding:4px 8px;border-radius:6px;border:1px solid var(--lumen-color-border);color:var(--lumen-color-text)";
-      btn.addEventListener("click", () => {
-        onPick(opt);
-        this.announce(`${label}: ${opt}`);
+      button.addEventListener("click", () => {
+        onPick(index);
+        this.announce(`${label}: ${option}`);
       });
-      group.appendChild(btn);
-    }
+      group.appendChild(button);
+    });
+
     row.appendChild(group);
     return row;
   }
@@ -661,17 +832,37 @@ export class ControlsController {
       case "open-appearance":
         this.openMenu("appearance");
         return;
+      case "open-audio":
+        this.openMenu("audio");
+        return;
+      case "open-chapters":
+        this.openMenu("chapters");
+        return;
+      case "set-audio": {
+        const id = item.dataset.value ?? "";
+        this.engine.setAudioTrack(id);
+        this.announce(this.strings.t("audioAnnouncement", item.textContent ?? ""));
+        this.openMenu("root");
+        return;
+      }
+      case "seek-chapter": {
+        const start = Number(item.dataset.value);
+        if (Number.isFinite(start)) this.video.currentTime = start;
+        this.announce(this.strings.t("chapterAnnouncement", item.textContent ?? ""));
+        this.closeMenu();
+        return;
+      }
       case "set-speed": {
         const rate = Number(item.dataset.value);
         this.video.playbackRate = rate;
-        this.announce(`Speed ${rate}×`);
+        this.announce(this.strings.t("speedAnnouncement", `${rate}×`));
         this.openMenu("root");
         return;
       }
       case "set-quality": {
         const value = item.dataset.value === "auto" ? "auto" : Number(item.dataset.value);
         this.engine.setQuality(value);
-        this.announce(value === "auto" ? "Quality: Auto" : `Quality: ${item.textContent}`);
+        this.announce(this.strings.t("qualityAnnouncement", value === "auto" ? this.strings.t("auto") : item.textContent ?? ""));
         this.openMenu("root");
         return;
       }
@@ -805,6 +996,15 @@ export class ControlsController {
 
   announce(message: string): void {
     this.els.announcer.textContent = message;
+  }
+
+  /** Re-applies labels after the translation table changes. */
+  retranslate(): void {
+    this.applyStaticLabels();
+    this.setPlayingUi(!this.video.paused);
+    this.updateVolumeUi();
+    this.updateFullscreenIcon();
+    if (this.menuOpen) this.renderMenu();
   }
 
   destroy(): void {

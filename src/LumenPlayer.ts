@@ -4,9 +4,17 @@ import { EventEmitter } from "./core/EventEmitter";
 import { PlaybackEngine } from "./core/PlaybackEngine";
 import { SubtitleManager } from "./subtitles/SubtitleManager";
 import { ControlsController } from "./ui/ControlsController";
+import { ChapterManager } from "./media/ChapterManager";
+import { CastController } from "./media/CastController";
+import { Translator, type LumenStrings } from "./i18n";
+import { DrmController, type LumenDrmConfig } from "./core/DrmController";
+import type { LumenPlugin } from "./plugins/types";
 import type {
+  LumenAudioTrack,
+  LumenChapter,
   LumenEventMap,
   LumenEventName,
+  LumenPlaylistItem,
   LumenQualityLevel,
   LumenSource,
   LumenTextTrackInit,
@@ -27,6 +35,8 @@ const OBSERVED = [
   "aspect-ratio",
   "object-fit",
   "thumbnails",
+  "chapters",
+  "lang",
 ] as const;
 
 /**
@@ -43,11 +53,28 @@ export class LumenPlayer extends HTMLElement {
   private emitter = new EventEmitter();
   private engine!: PlaybackEngine;
   private subtitles!: SubtitleManager;
+  private chapterManager!: ChapterManager;
+  private castController!: CastController;
   private controls!: ControlsController;
   private video!: HTMLVideoElement;
   private root!: HTMLElement;
   private connected = false;
   private pendingSources: LumenSource[] = [];
+  private translator = new Translator();
+  private items: LumenPlaylistItem[] = [];
+  private itemIndex = -1;
+  private drmController: DrmController | null = null;
+  private drmConfig: LumenDrmConfig = {};
+  private plugins: LumenPlugin[] = [];
+  private pluginTeardowns: Array<() => void> = [];
+
+  /** Plugins applied to every player instance created afterwards. */
+  private static globalPlugins: LumenPlugin[] = [];
+
+  /** Registers a plugin for all future players. */
+  static use(plugin: LumenPlugin): void {
+    LumenPlayer.globalPlugins.push(plugin);
+  }
 
   constructor() {
     super();
@@ -82,9 +109,15 @@ export class LumenPlayer extends HTMLElement {
     this.video.muted = this.hasAttribute("muted");
     this.video.autoplay = this.hasAttribute("autoplay");
 
-    this.engine = new PlaybackEngine(this.video, this.emitter);
+    this.engine = new PlaybackEngine(this.video, this.emitter, {
+      drm: () => this.drmController,
+    });
     const captionsOverlay = this.root.querySelector(".lumen-captions") as HTMLElement;
     this.subtitles = new SubtitleManager(this.video, captionsOverlay, this.emitter);
+    this.chapterManager = new ChapterManager(this.video, this.emitter);
+    this.castController = new CastController(this.video, (available) =>
+      this.emitter.emit("castavailabilitychange", { available }),
+    );
 
     this.controls = new ControlsController({
       root: this.root,
@@ -93,7 +126,24 @@ export class LumenPlayer extends HTMLElement {
       emitter: this.emitter,
       engine: this.engine,
       subtitles: this.subtitles,
+      chapters: this.chapterManager,
+      cast: this.castController,
+      strings: this.translator,
+      playlist: {
+        hasPlaylist: () => this.items.length > 1,
+        hasNext: () => this.itemIndex >= 0 && this.itemIndex < this.items.length - 1,
+        hasPrevious: () => this.itemIndex > 0,
+        next: () => this.next(),
+        previous: () => this.previous(),
+      },
       retry: () => this.engine.load(this.pendingSources),
+    });
+
+    // Advancing a playlist is the one place the player reacts to `ended`
+    // itself; without a playlist it stays out of the way.
+    this.video.addEventListener("ended", () => {
+      if (this.video.loop) return;
+      if (this.itemIndex >= 0 && this.itemIndex < this.items.length - 1) this.next();
     });
 
     this.applyTheme();
@@ -101,9 +151,15 @@ export class LumenPlayer extends HTMLElement {
     this.applyObjectFit();
     if (this.hasAttribute("poster")) this.controls.setPoster(this.getAttribute("poster"));
     if (this.hasAttribute("thumbnails")) void this.controls.setThumbnails(this.getAttribute("thumbnails"));
+    if (this.hasAttribute("chapters")) this.chapterManager.addTrackElement(this.getAttribute("chapters")!);
 
     this.ingestLightDomTracks();
+    this.chapterManager.adoptExisting();
     this.ingestLightDomSources();
+
+    for (const plugin of [...LumenPlayer.globalPlugins, ...this.plugins]) {
+      this.applyPlugin(plugin);
+    }
 
     this.emitter.emit("ready", undefined);
   }
@@ -206,8 +262,10 @@ export class LumenPlayer extends HTMLElement {
 
   // ------------------------------------------------------------ public API
 
-  async load(sources: LumenSource | LumenSource[]): Promise<void> {
-    this.pendingSources = Array.isArray(sources) ? sources : [sources];
+  /** Loads a source. Accepts a URL string, a source object, or a list of fallbacks. */
+  async load(sources: string | LumenSource | LumenSource[]): Promise<void> {
+    const list = Array.isArray(sources) ? sources : [sources];
+    this.pendingSources = list.map((source) => (typeof source === "string" ? { src: source } : source));
     await this.engine?.load(this.pendingSources);
   }
 
@@ -233,6 +291,155 @@ export class LumenPlayer extends HTMLElement {
 
   addTextTrack(init: LumenTextTrackInit): void {
     this.subtitles.addTrack(init);
+  }
+
+  // ------------------------------------------------------------- playlist
+
+  /**
+   * The queue of items to play. Setting it loads the first entry; playback
+   * advances automatically when each item ends.
+   */
+  get playlist(): LumenPlaylistItem[] {
+    return this.items;
+  }
+
+  set playlist(items: LumenPlaylistItem[]) {
+    this.items = [...items];
+    this.emitter.emit("playlistchange", { items: this.items });
+    this.controls?.refreshPlaylistButtons();
+    if (this.items.length > 0) void this.playItem(0);
+  }
+
+  get playlistIndex(): number {
+    return this.itemIndex;
+  }
+
+  /** Loads a specific playlist entry. Out-of-range indices are ignored. */
+  async playItem(index: number): Promise<void> {
+    const item = this.items[index];
+    if (!item) return;
+
+    this.itemIndex = index;
+
+    // Each item owns its own subtitles, chapters and artwork, so anything
+    // carried over from the previous one has to go.
+    this.clearItemState();
+
+    if (item.poster) this.controls.setPoster(item.poster);
+    if (item.thumbnails) void this.controls.setThumbnails(item.thumbnails);
+    if (item.chapters) this.chapterManager.addTrackElement(item.chapters);
+    for (const track of item.tracks ?? []) this.subtitles.addTrack(track);
+
+    this.controls.refreshPlaylistButtons();
+    this.emitter.emit("playlistitemchange", { item, index });
+    if (item.title) this.controls.announce(this.translator.t("nowPlaying", item.title));
+
+    await this.load(item.src);
+    // Autoplay only once the playlist is already rolling, so setting a
+    // playlist doesn't start playback the user never asked for.
+    if (index > 0) void this.video.play().catch(() => {});
+  }
+
+  next(): void {
+    if (this.itemIndex < this.items.length - 1) void this.playItem(this.itemIndex + 1);
+  }
+
+  previous(): void {
+    if (this.itemIndex > 0) void this.playItem(this.itemIndex - 1);
+  }
+
+  private clearItemState(): void {
+    this.subtitles.setActiveTrack(null);
+    for (const element of Array.from(this.video.querySelectorAll("track"))) {
+      element.remove();
+    }
+    this.chapterManager.reset();
+    this.controls.setPoster(null);
+  }
+
+  // ------------------------------------------------------------- chapters
+
+  get chapters(): LumenChapter[] {
+    return this.chapterManager?.chapters ?? [];
+  }
+
+  setChapters(chapters: LumenChapter[]): void {
+    this.chapterManager.setChapters(chapters);
+  }
+
+  /** The chapter containing the current playback position, if any. */
+  get currentChapter(): LumenChapter | null {
+    return this.chapterManager?.chapterAt(this.video.currentTime) ?? null;
+  }
+
+  // ---------------------------------------------------------- audio tracks
+
+  get audioTracks(): LumenAudioTrack[] {
+    return this.engine?.audioTracks ?? [];
+  }
+
+  setAudioTrack(id: string): void {
+    this.engine?.setAudioTrack(id);
+  }
+
+  // ----------------------------------------------------------------- i18n
+
+  /** Replaces any subset of the UI strings; omitted keys stay English. */
+  setTranslations(strings: Partial<LumenStrings>): void {
+    this.translator.set(strings);
+    this.controls?.retranslate();
+  }
+
+  // --------------------------------------------------------------- plugins
+
+  /**
+   * Registers a plugin on this player. Safe to call before or after the
+   * element is connected — plugins registered early run at mount.
+   */
+  use(plugin: LumenPlugin): this {
+    this.plugins.push(plugin);
+    if (this.connected) this.applyPlugin(plugin);
+    return this;
+  }
+
+  private applyPlugin(plugin: LumenPlugin): void {
+    try {
+      const teardown = plugin.setup(this);
+      if (typeof teardown === "function") this.pluginTeardowns.push(teardown);
+    } catch {
+      // A broken plugin must not take the player down with it.
+      this.controls?.announce(`Plugin "${plugin.name}" failed to start`);
+    }
+  }
+
+  // ------------------------------------------------------------------ drm
+
+  /**
+   * DRM configuration. Applies to the next `load()`, and is passed to
+   * whichever pipeline plays the stream (native EME, hls.js, or dash.js).
+   */
+  get drm(): LumenDrmConfig {
+    return this.drmConfig;
+  }
+
+  set drm(config: LumenDrmConfig) {
+    this.drmConfig = config;
+    this.drmController?.destroy();
+    this.drmController = new DrmController(this.video, config, (message) =>
+      this.emitter.emit("error", { code: "DECODE", message, fatal: true }),
+    );
+    this.drmController.attach();
+  }
+
+  // ----------------------------------------------------------------- cast
+
+  /** True when a cast receiver (AirPlay or Remote Playback) is reachable. */
+  get isCastAvailable(): boolean {
+    return this.castController?.isAvailable ?? false;
+  }
+
+  requestCast(): Promise<boolean> {
+    return this.castController?.prompt() ?? Promise.resolve(false);
   }
 
   setSubtitlePrefs(prefs: Partial<SubtitleStylePrefs>): void {
@@ -317,6 +524,17 @@ export class LumenPlayer extends HTMLElement {
 
   destroy(): void {
     this.emitter.emit("destroy", undefined);
+    for (const teardown of this.pluginTeardowns) {
+      try {
+        teardown();
+      } catch {
+        /* a plugin failing to clean up shouldn't block the rest */
+      }
+    }
+    this.pluginTeardowns = [];
+    this.drmController?.destroy();
+    this.castController?.destroy();
+    this.chapterManager?.destroy();
     this.controls?.destroy();
     this.subtitles?.destroy();
     this.engine?.destroy();
