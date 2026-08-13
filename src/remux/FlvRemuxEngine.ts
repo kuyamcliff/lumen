@@ -6,6 +6,15 @@ import { MseSink } from "./MseSink";
 
 /** FLV timestamps are milliseconds; scaling up avoids per-frame rounding. */
 const TIMESCALE = 1000;
+
+/**
+ * How long to wait for an audio configuration tag after the video one.
+ * FLV declares tracks through separate tags, so a brief pause lets both
+ * land in a single init segment instead of starting video-only.
+ */
+const AUDIO_GRACE_MS = 50;
+
+/** How much media to accumulate per track before emitting a fragment. */
 const SEGMENT_TARGET_SECONDS = 1;
 
 interface PendingTrack {
@@ -102,7 +111,10 @@ export class FlvRemuxEngine {
    * than starting video-only and losing the audio track.
    */
   private async maybeStart(): Promise<boolean> {
-    if (this.started || this.destroyed) return this.started;
+    // Video and audio configuration arrive as separate tags, each of which
+    // calls in here. Without this guard the two can interleave across the
+    // grace-period await below and build two MediaSources for one file.
+    if (this.started || this.starting || this.destroyed) return this.started;
 
     const video = this.pendingConfigs.get("video");
     const audio = this.pendingConfigs.get("audio");
@@ -110,11 +122,12 @@ export class FlvRemuxEngine {
 
     if (video && !audio && !this.audioGraceElapsed) {
       this.audioGraceElapsed = true;
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve, AUDIO_GRACE_MS));
       if (this.destroyed) return false;
       return this.maybeStart();
     }
-    if (this.started) return true;
+
+    this.starting = true;
 
     const muxTracks: MuxTrack[] = [];
     const built = new Map<"video" | "audio", PendingTrack>();
@@ -154,12 +167,14 @@ export class FlvRemuxEngine {
     }
 
     if (muxTracks.length === 0) {
+      this.starting = false;
       this.emitFatal("This FLV uses a codec your browser can't play.");
       return false;
     }
 
     const mime = buildMimeType(muxTracks);
     if (!MseSink.isSupported(mime)) {
+      this.starting = false;
       this.emitFatal("This FLV uses a codec your browser can't play.");
       return false;
     }
@@ -170,6 +185,7 @@ export class FlvRemuxEngine {
     this.tracks = built;
 
     const opened = await sink.open(mime, "segments");
+    this.starting = false;
     if (!opened || this.destroyed) return false;
 
     this.started = true;
@@ -177,6 +193,7 @@ export class FlvRemuxEngine {
   }
 
   private audioGraceElapsed = false;
+  private starting = false;
 
   private onSample(sample: FlvSample): void {
     const track = this.tracks.get(sample.kind);

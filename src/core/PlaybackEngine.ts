@@ -3,10 +3,10 @@ import type { ErrorData } from "hls.js";
 import type { EventEmitter } from "./EventEmitter";
 import type { LumenAudioTrack, LumenError, LumenQualityLevel, LumenSource, LumenSourceType } from "../types";
 import { RETRY_BACKOFF_MS, delay } from "../utils/retry";
-import { ResilientMp4Engine } from "./ResilientMp4Engine";
 import { containerLabel, probeContainer, type ContainerKind } from "./containers";
 import type { MatroskaRemuxEngine } from "../remux/MatroskaRemuxEngine";
 import type { DashEngine } from "./DashEngine";
+import type { ResilientMp4Engine } from "./ResilientMp4Engine";
 import type { FlvRemuxEngine } from "../remux/FlvRemuxEngine";
 import type { DrmController } from "./DrmController";
 
@@ -588,8 +588,14 @@ export class PlaybackEngine {
    * not just files that happen to end in `.mp4`.
    */
   private canRemuxAsIsoBmff(): boolean {
-    if (this.currentContainer) return this.currentContainer === "iso-bmff";
-    return this.currentType === "mp4" || this.currentType === "mov";
+    // "unknown" gets the benefit of the doubt: sniffing failed, so the file
+    // may well be an ISO-BMFF variant with an unusual header — exactly the
+    // kind of damage this fallback exists for. Refusing to try would give
+    // up on the case it was built to handle.
+    if (this.currentContainer) {
+      return this.currentContainer === "iso-bmff" || this.currentContainer === "unknown";
+    }
+    return this.currentType === "mp4" || this.currentType === "mov" || this.currentType === "auto";
   }
 
   /** Standard retries are exhausted. For ISO-BMFF sources, make one last attempt via the mp4box.js/MSE fallback before giving up — see ResilientMp4Engine. */
@@ -613,6 +619,12 @@ export class PlaybackEngine {
       this.emitPermanentFailure(code);
       return;
     }
+
+    // Loaded on demand: recovery only matters for a file that already
+    // failed, so the 99% of pages serving healthy media shouldn't carry
+    // the demuxer (or mp4box.js's glue) in their initial bundle.
+    const { ResilientMp4Engine } = await import("./ResilientMp4Engine");
+    if (this.destroyed) return;
 
     const engine = new ResilientMp4Engine(this.video, this.emitter);
     this.resilientEngine = engine;

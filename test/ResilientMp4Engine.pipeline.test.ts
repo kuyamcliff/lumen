@@ -42,15 +42,33 @@ class FakeMediaSource extends EventTarget {
   endOfStream(): void {
     this.readyState = "ended";
   }
-  open(): void {
-    this.readyState = "open";
-    this.dispatchEvent(new Event("sourceopen"));
+  /** Mirrors the browser firing "sourceopen" once the element attaches. */
+  openSoon(): void {
+    queueMicrotask(() => {
+      this.readyState = "open";
+      this.dispatchEvent(new Event("sourceopen"));
+    });
   }
+}
+
+let lastMediaSource: FakeMediaSource | null = null;
+
+/** Stubs MediaSource so instances open themselves, as a real one does. */
+function stubMediaSource(): void {
+  const ctor = function () {
+    const instance = new FakeMediaSource();
+    lastMediaSource = instance;
+    instance.openSoon();
+    return instance;
+  } as unknown as typeof MediaSource;
+  (ctor as unknown as { isTypeSupported: () => boolean }).isTypeSupported = () => true;
+  vi.stubGlobal("MediaSource", ctor);
 }
 
 describe("ResilientMp4Engine pipeline (real mp4box.js, fake MediaSource)", () => {
   beforeEach(() => {
-    vi.stubGlobal("MediaSource", FakeMediaSource);
+    lastMediaSource = null;
+    stubMediaSource();
     vi.stubGlobal("URL", {
       createObjectURL: () => "blob:fake",
       revokeObjectURL: () => {},
@@ -72,21 +90,13 @@ describe("ResilientMp4Engine pipeline (real mp4box.js, fake MediaSource)", () =>
     const video = document.createElement("video");
     const engine = new ResilientMp4Engine(video, new EventEmitter());
 
-    const attemptPromise = engine.attempt("https://example.com/truncated-sample.mp4");
-
-    // Let mp4box.js parse the moov and configure segmentation (this is the
-    // synchronous-ordering fix under test), then open the MediaSource the
-    // engine created, exactly as a real "sourceopen" event would.
-    await vi.waitFor(() => {
-      const ms = (engine as unknown as { mediaSource: FakeMediaSource | null }).mediaSource;
-      expect(ms).not.toBeNull();
-    });
-    const mediaSource = (engine as unknown as { mediaSource: FakeMediaSource }).mediaSource;
-    mediaSource.open();
-
-    const ok = await attemptPromise;
+    const ok = await engine.attempt("https://example.com/truncated-sample.mp4");
     expect(ok).toBe(true);
 
+    const mediaSource = lastMediaSource!;
+    expect(mediaSource).not.toBeNull();
+
+    await vi.waitFor(() => expect(mediaSource.sourceBuffers.length).toBeGreaterThan(0));
     const sourceBuffer = mediaSource.sourceBuffers[0];
     expect(sourceBuffer).toBeDefined();
 
@@ -96,7 +106,7 @@ describe("ResilientMp4Engine pipeline (real mp4box.js, fake MediaSource)", () =>
 
     // The first appended buffer is the combined init segment — a real
     // fragmented MP4 starts with an ftyp box.
-    const first = new Uint8Array(sourceBuffer!.appended[0]!);
+    const first = new Uint8Array(sourceBuffer!.appended[0]! as ArrayBufferLike as ArrayBuffer);
     const fourcc = String.fromCharCode(first[4]!, first[5]!, first[6]!, first[7]!);
     expect(fourcc).toBe("ftyp");
 

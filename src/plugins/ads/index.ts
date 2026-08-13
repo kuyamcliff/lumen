@@ -152,6 +152,9 @@ class AdController {
     this.playing = true;
 
     const wasPlaying = !this.player.paused;
+    // Recorded before anything can await: the ad may end (or fail) between
+    // here and the play() below, and finish() reads this.
+    this.resumeAfterAd = wasPlaying;
     this.player.pause();
 
     this.container.hidden = false;
@@ -169,7 +172,6 @@ class AdController {
 
     fireBeacons(ad.impressions);
     fireBeacons(ad.tracking.start);
-    this.resumeAfterAd = wasPlaying;
   }
 
   private resumeAfterAd = false;

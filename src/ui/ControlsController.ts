@@ -91,6 +91,14 @@ export class ControlsController {
   private thumbnails: ThumbnailTrack | null = null;
   private boundOutsideClick = this.onOutsideClick.bind(this);
   private boundKeydown = this.onKeydown.bind(this);
+  private boundFullscreenChange = () => this.onFullscreenChange();
+  private boundMenuClick = (event: Event) => {
+    const item = (event.target as HTMLElement).closest<HTMLElement>("[data-menu-action]");
+    if (item) this.onMenuAction(item);
+  };
+  private boundMenuKeydown = (event: Event) => this.onMenuKeydown(event as KeyboardEvent);
+  /** The control that opened the menu, so focus can be handed back on close. */
+  private menuOpener: HTMLElement | null = null;
 
   constructor(opts: ControlsControllerOptions) {
     this.root = opts.root;
@@ -146,7 +154,15 @@ export class ControlsController {
     this.refreshPlaylistButtons();
 
     document.addEventListener("click", this.boundOutsideClick, true);
-    document.addEventListener("fullscreenchange", () => this.onFullscreenChange());
+    document.addEventListener("fullscreenchange", this.boundFullscreenChange);
+
+    // Menu contents are re-rendered constantly, so the handler is delegated
+    // from the menu container once. Registering it per render used to leak
+    // a listener each time — and worse, a `once` listener meant a single
+    // click on anything that wasn't a menu item (the panel's own padding, a
+    // caption-appearance button) silently killed the whole menu.
+    this.els.menu.addEventListener("click", this.boundMenuClick);
+    this.els.menu.addEventListener("keydown", this.boundMenuKeydown);
   }
 
   /** Applies translated labels to controls whose text never changes at runtime. */
@@ -336,7 +352,9 @@ export class ControlsController {
           this.toggleFullscreen();
           break;
         case "settings":
-          this.toggleMenu();
+          // `detail === 0` means the click came from the keyboard (Enter or
+          // Space), where focus must move into the menu to keep going.
+          this.toggleMenu((e as MouseEvent).detail === 0);
           break;
         case "retry":
           this.hideError();
@@ -602,23 +620,99 @@ export class ControlsController {
 
   // --------------------------------------------------------------- menu
 
-  private toggleMenu(): void {
-    this.menuOpen ? this.closeMenu() : this.openMenu("root");
+  private toggleMenu(focusFirst = false): void {
+    if (this.menuOpen) this.closeMenu();
+    else this.openMenu("root", focusFirst);
   }
 
-  private openMenu(view: MenuView): void {
+  private openMenu(view: MenuView, focusFirst = false): void {
+    // Remember where focus came from the first time the menu opens, not on
+    // every submenu navigation — otherwise closing would return focus to a
+    // menu row that no longer exists.
+    if (!this.menuOpen) {
+      const active = this.root.getRootNode() as ShadowRoot | Document;
+      this.menuOpener = (active.activeElement as HTMLElement | null) ?? null;
+    }
+
     this.menuOpen = true;
     this.menuView = view;
     this.renderMenu();
     this.els.menu.hidden = false;
     $(this.root, '[data-action="settings"]').setAttribute("aria-expanded", "true");
     this.showControls();
+
+    if (focusFirst) this.focusMenuItem(0);
+  }
+
+  /** Focusable rows of the open menu, in visual order. */
+  private menuItems(): HTMLElement[] {
+    return [...this.els.menu.querySelectorAll<HTMLElement>("[data-menu-action], .lumen-menu-row button")];
+  }
+
+  private focusMenuItem(index: number): void {
+    const items = this.menuItems();
+    if (items.length === 0) return;
+    // Wrap around: a menu is a loop, not a list with dead ends.
+    const target = items[(index + items.length) % items.length]!;
+    target.focus();
+  }
+
+  /**
+   * Arrow-key navigation inside the menu.
+   *
+   * Menu semantics differ from Tab order: Up/Down move between rows, Left
+   * backs out of a submenu, and Escape closes and returns focus to the
+   * button that opened it.
+   */
+  private onMenuKeydown(event: KeyboardEvent): void {
+    const items = this.menuItems();
+    const index = items.indexOf(event.target as HTMLElement);
+
+    switch (event.key) {
+      case "ArrowDown":
+        this.focusMenuItem(index + 1);
+        event.preventDefault();
+        break;
+      case "ArrowUp":
+        this.focusMenuItem(index - 1);
+        event.preventDefault();
+        break;
+      case "Home":
+        this.focusMenuItem(0);
+        event.preventDefault();
+        break;
+      case "End":
+        this.focusMenuItem(items.length - 1);
+        event.preventDefault();
+        break;
+      case "ArrowLeft":
+        if (this.menuView !== "root") {
+          this.openMenu("root", true);
+          event.preventDefault();
+        }
+        break;
+      case "Escape":
+        this.closeMenu();
+        event.preventDefault();
+        // Escape shouldn't also reach the player's own handler.
+        event.stopPropagation();
+        break;
+      default:
+        break;
+    }
   }
 
   private closeMenu(): void {
+    if (!this.menuOpen) return;
     this.menuOpen = false;
     this.els.menu.hidden = true;
     $(this.root, '[data-action="settings"]').setAttribute("aria-expanded", "false");
+
+    // Returning focus is what keeps keyboard use coherent: closing a menu
+    // should never dump focus back to the top of the document.
+    if (this.menuOpener?.isConnected) this.menuOpener.focus();
+    else $(this.root, '[data-action="settings"]').focus();
+    this.menuOpener = null;
   }
 
   private onOutsideClick(e: MouseEvent): void {
@@ -632,14 +726,6 @@ export class ControlsController {
   private renderMenu(): void {
     const menu = this.els.menu;
     menu.replaceChildren();
-    menu.addEventListener(
-      "click",
-      (e) => {
-        const item = (e.target as HTMLElement).closest<HTMLElement>("[data-menu-action]");
-        if (item) this.onMenuAction(item);
-      },
-      { once: true },
-    );
 
     if (this.menuView === "root") {
       const rate = this.video.playbackRate;
@@ -816,27 +902,31 @@ export class ControlsController {
 
   private onMenuAction(item: HTMLElement): void {
     const action = item.dataset.menuAction;
+    // Preserve keyboard context: if a row was activated by keyboard, the
+    // view it opens should receive focus rather than stranding it.
+    const keyboard = this.menuItems().includes(document.activeElement as HTMLElement) ||
+      this.els.menu.contains((this.root.getRootNode() as ShadowRoot).activeElement as Node);
     switch (action) {
       case "back":
-        this.openMenu("root");
+        this.openMenu("root", keyboard);
         return;
       case "open-speed":
-        this.openMenu("speed");
+        this.openMenu("speed", keyboard);
         return;
       case "open-quality":
-        this.openMenu("quality");
+        this.openMenu("quality", keyboard);
         return;
       case "open-captions":
-        this.openMenu("captions");
+        this.openMenu("captions", keyboard);
         return;
       case "open-appearance":
-        this.openMenu("appearance");
+        this.openMenu("appearance", keyboard);
         return;
       case "open-audio":
-        this.openMenu("audio");
+        this.openMenu("audio", keyboard);
         return;
       case "open-chapters":
-        this.openMenu("chapters");
+        this.openMenu("chapters", keyboard);
         return;
       case "set-audio": {
         const id = item.dataset.value ?? "";
@@ -1009,6 +1099,12 @@ export class ControlsController {
 
   destroy(): void {
     document.removeEventListener("click", this.boundOutsideClick, true);
+    // This one used to be an anonymous listener that was never removed, so
+    // a destroyed player kept reacting to fullscreen changes forever.
+    document.removeEventListener("fullscreenchange", this.boundFullscreenChange);
+    this.els.menu.removeEventListener("click", this.boundMenuClick);
+    this.els.menu.removeEventListener("keydown", this.boundMenuKeydown);
+    this.root.removeEventListener("keydown", this.boundKeydown);
     if (this.idleTimer) window.clearTimeout(this.idleTimer);
   }
 }

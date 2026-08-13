@@ -1,5 +1,6 @@
 import type { ISOFile, MP4BoxBuffer as MP4BoxBufferType, Movie } from "mp4box";
 import type { EventEmitter } from "./EventEmitter";
+import { MseSink } from "../remux/MseSink";
 
 declare global {
   interface Window {
@@ -45,13 +46,9 @@ const FETCH_CHUNK_TARGET = 1.5 * 1024 * 1024; // bytes per appendBuffer() call
 export class ResilientMp4Engine {
   private video: HTMLVideoElement;
   private emitter: EventEmitter;
-  private mediaSource: MediaSource | null = null;
-  private sourceBuffer: SourceBuffer | null = null;
+  private sink: MseSink | null = null;
   private isoFile: ISOFile | null = null;
   private abortController: AbortController | null = null;
-  private objectUrl: string | null = null;
-  private pendingSegments: ArrayBuffer[] = [];
-  private streamDone = false;
   private destroyed = false;
 
   constructor(video: HTMLVideoElement, emitter: EventEmitter) {
@@ -99,16 +96,20 @@ export class ResilientMp4Engine {
           return;
         }
         try {
-          // Segmentation must be configured — and start() called —
-          // synchronously here, before this appendBuffer() call returns.
-          // For small/fast responses the whole file can already be queued
-          // up by the time the (async) MediaSource "sourceopen" event
-          // would fire, so waiting for that event to call start() risks
-          // missing the window where mp4box.js still has samples to hand
-          // off; segments produced before the SourceBuffer exists simply
-          // queue in pendingSegments until it does.
+          // Order matters twice over here.
+          //
+          // The sink is created first so it can queue: segmentation emits
+          // the init segment and possibly every media segment synchronously,
+          // long before the MediaSource finishes opening.
+          //
+          // Segmentation must then be configured — and start() called —
+          // before this appendBuffer() call returns. For small or fast
+          // responses the whole file can already be buffered by the time the
+          // async "sourceopen" event fires, so deferring start() until then
+          // risks missing the window where mp4box.js still has samples.
+          this.createSink();
           this.configureSegmentation(isoFile, info);
-          this.openMediaSource(mime);
+          this.openSink(mime);
         } catch {
           finish(false);
           return;
@@ -168,14 +169,12 @@ export class ResilientMp4Engine {
       }
       flushPending();
       isoFile.flush();
-      this.streamDone = true;
-      this.maybeEndOfStream();
+      this.sink?.endOfInput();
     } catch {
       // Network failure mid-stream: whatever was already appended stays
-      // playable. Mark the stream done so buffered playback can finish
-      // cleanly instead of hanging forever waiting for more data.
-      this.streamDone = true;
-      this.maybeEndOfStream();
+      // playable. Ending the input lets buffered playback finish cleanly
+      // instead of hanging forever waiting for more data.
+      this.sink?.endOfInput();
     }
   }
 
@@ -186,79 +185,39 @@ export class ResilientMp4Engine {
     }
 
     const init = isoFile.initializeSegmentation();
-    this.pendingSegments.push(init.buffer);
+    this.sink?.append(new Uint8Array(init.buffer));
 
     isoFile.onSegment = (id: number, _user: unknown, buffer: ArrayBuffer, sampleNum: number) => {
-      this.pendingSegments.push(buffer);
+      this.sink?.append(new Uint8Array(buffer));
       isoFile.releaseUsedSamples(id, sampleNum);
-      this.pumpSegments();
     };
 
     isoFile.start();
   }
 
-  /** Points the <video> at a MediaSource and, once it's open, creates the SourceBuffer that pumpSegments() feeds. */
-  private openMediaSource(mime: string): void {
-    const mediaSource = new MediaSource();
-    this.mediaSource = mediaSource;
-    this.objectUrl = URL.createObjectURL(mediaSource);
-    this.video.src = this.objectUrl;
+  /** Creates the sink up front so segments produced during setup are queued rather than dropped. */
+  private createSink(): void {
+    this.sink = new MseSink(this.video, () => this.failAfterOpen());
+  }
 
-    mediaSource.addEventListener(
-      "sourceopen",
-      () => {
-        if (this.destroyed) return;
-        let sourceBuffer: SourceBuffer;
-        try {
-          sourceBuffer = mediaSource.addSourceBuffer(mime);
-        } catch {
-          this.failAfterOpen();
-          return;
-        }
-        sourceBuffer.mode = "sequence";
-        this.sourceBuffer = sourceBuffer;
-
-        sourceBuffer.addEventListener("updateend", () => this.pumpSegments());
-        sourceBuffer.addEventListener("error", () => this.failAfterOpen());
-
-        this.pumpSegments();
-      },
-      { once: true },
-    );
+  /**
+   * Points the <video> at a MediaSource, draining anything already queued.
+   *
+   * "sequence" mode is what this path needs: mp4box.js emits segments in
+   * order, but their timestamps come from a file we already know is
+   * damaged, so letting the browser lay them end to end is more robust
+   * than trusting the timeline inside it.
+   */
+  private openSink(mime: string): void {
+    void this.sink?.open(mime, "sequence").then((opened) => {
+      if (!opened && !this.destroyed) this.failAfterOpen();
+    });
   }
 
   private buildMimeType(info: Movie): string | null {
     const codecs = info.tracks.map((t) => t.codec).filter(Boolean);
     if (codecs.length === 0) return null;
     return `video/mp4; codecs="${codecs.join(",")}"`;
-  }
-
-  private pumpSegments(): void {
-    const sb = this.sourceBuffer;
-    if (!sb || sb.updating) return;
-    const next = this.pendingSegments.shift();
-    if (next) {
-      try {
-        sb.appendBuffer(next);
-      } catch {
-        this.failAfterOpen();
-      }
-      return;
-    }
-    this.maybeEndOfStream();
-  }
-
-  private maybeEndOfStream(): void {
-    const ms = this.mediaSource;
-    if (!ms || ms.readyState !== "open") return;
-    if (!this.streamDone) return;
-    if (this.sourceBuffer?.updating) return;
-    if (this.pendingSegments.length > 0) return;
-    try {
-      ms.endOfStream();
-    } catch {
-      /* already ending/ended — fine to ignore */
-    }
   }
 
   private failAfterOpen(): void {
@@ -274,10 +233,8 @@ export class ResilientMp4Engine {
   }
 
   private cleanupFailed(): void {
-    if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
-    this.objectUrl = null;
-    this.mediaSource = null;
-    this.sourceBuffer = null;
+    this.sink?.destroy();
+    this.sink = null;
   }
 
   destroy(): void {
@@ -288,7 +245,7 @@ export class ResilientMp4Engine {
       this.isoFile.onReady = undefined;
       this.isoFile.onError = undefined;
     }
-    if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
-    this.objectUrl = null;
+    this.sink?.destroy();
+    this.sink = null;
   }
 }

@@ -6,6 +6,9 @@
  * remux paths (mp4box.js for ISO-BMFF, the Matroska remuxer) share this
  * rather than each growing their own copy.
  */
+/** How long to wait before retrying an append the browser refused. */
+const RETRY_DELAY_MS = 250;
+
 export class MseSink {
   private video: HTMLVideoElement;
   private mediaSource: MediaSource | null = null;
@@ -14,6 +17,7 @@ export class MseSink {
   private queue: Uint8Array[] = [];
   private inputEnded = false;
   private destroyed = false;
+  private retryTimer: number | null = null;
   private onFatal: (message: string) => void;
 
   constructor(video: HTMLVideoElement, onFatal: (message: string) => void) {
@@ -88,10 +92,13 @@ export class MseSink {
       try {
         sourceBuffer.appendBuffer(next as BufferSource);
       } catch {
-        // QuotaExceededError is the common case here: the browser's buffer
-        // is full because the viewer is far behind. Requeue and wait for
-        // playback to free room rather than dropping media.
+        // QuotaExceededError is the common case: the browser's buffer is
+        // full because the viewer is far behind. Requeue rather than drop
+        // media — but a failed append fires no `updateend`, so without an
+        // explicit retry nothing would ever pump the queue again and
+        // playback would stall permanently at the buffer's edge.
         this.queue.unshift(next);
+        this.scheduleRetry();
       }
       return;
     }
@@ -105,8 +112,25 @@ export class MseSink {
     }
   }
 
+  /**
+   * Retries a rejected append shortly.
+   *
+   * Space frees up as playback advances past buffered media, so a short
+   * fixed delay is the right shape here — this is waiting on the viewer,
+   * not on the network.
+   */
+  private scheduleRetry(): void {
+    if (this.retryTimer !== null || this.destroyed) return;
+    this.retryTimer = window.setTimeout(() => {
+      this.retryTimer = null;
+      this.pump();
+    }, RETRY_DELAY_MS);
+  }
+
   destroy(): void {
     this.destroyed = true;
+    if (this.retryTimer !== null) window.clearTimeout(this.retryTimer);
+    this.retryTimer = null;
     this.queue = [];
     if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
     this.objectUrl = null;
