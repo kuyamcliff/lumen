@@ -44,6 +44,10 @@ export class DrmController {
   private config: LumenDrmConfig;
   private onError: (message: string) => void;
   private attached = false;
+  /** Set synchronously so concurrent `encrypted` events can't both set up keys. */
+  private setupStarted = false;
+  /** Open sessions, so they can be closed on teardown rather than left holding keys. */
+  private sessions = new Set<MediaKeySession>();
   private boundEncrypted = (event: Event) => void this.onEncrypted(event as MediaEncryptedEvent);
 
   constructor(video: HTMLVideoElement, config: LumenDrmConfig, onError: (message: string) => void) {
@@ -91,7 +95,14 @@ export class DrmController {
   private async onEncrypted(event: MediaEncryptedEvent): Promise<void> {
     // Once a MediaKeys object is attached it handles every subsequent
     // `encrypted` event, including key rotation, so this only runs once.
-    if (this.video.mediaKeys) return;
+    //
+    // The `setupStarted` flag is what makes that true. An encrypted MP4
+    // fires `encrypted` once per track, near-simultaneously, and
+    // `video.mediaKeys` isn't populated until several awaits later — so
+    // checking it alone let both events through, and the second
+    // `setMediaKeys` rejected and reported the video as unplayable.
+    if (this.setupStarted || this.video.mediaKeys) return;
+    this.setupStarted = true;
 
     try {
       const { keySystem, config } = await this.selectKeySystem();
@@ -113,11 +124,14 @@ export class DrmController {
       await this.video.setMediaKeys(mediaKeys);
 
       const session = mediaKeys.createSession();
+      this.sessions.add(session);
       session.addEventListener("message", (message) => {
         void this.onLicenseRequest(session, message as MediaKeyMessageEvent, config);
       });
       if (event.initData) await session.generateRequest(event.initDataType, event.initData);
     } catch {
+      // Left as started: a retry would hit the same unsupported platform,
+      // and re-running would risk the double-setMediaKeys this guards.
       this.onError("This video is protected and couldn't be unlocked on this device.");
     }
   }
@@ -182,5 +196,14 @@ export class DrmController {
   destroy(): void {
     this.video.removeEventListener("encrypted", this.boundEncrypted);
     this.attached = false;
+    this.setupStarted = false;
+
+    // Sessions hold decryption keys and, on some platforms, a server-side
+    // license allocation; dropping the reference without closing them
+    // leaks both for the lifetime of the page.
+    for (const session of this.sessions) {
+      void session.close().catch(() => {});
+    }
+    this.sessions.clear();
   }
 }

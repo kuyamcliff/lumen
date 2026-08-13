@@ -401,8 +401,14 @@ export class ControlsController {
 
     const timeFromEvent = (clientX: number): number => {
       const rect = bar.getBoundingClientRect();
+      if (rect.width === 0) return 0;
       const ratio = clamp((clientX - rect.left) / rect.width, 0, 1);
-      return ratio * (this.video.duration || 0);
+      return ratio * this.scrubbableDuration();
+    };
+
+    /** Seeks only to a real time. A live stream's duration is Infinity, and assigning NaN to currentTime throws. */
+    const seekTo = (time: number) => {
+      if (Number.isFinite(time)) this.video.currentTime = time;
     };
 
     const showPreview = async (clientX: number) => {
@@ -417,21 +423,34 @@ export class ControlsController {
       this.els.previewChapter.hidden = !chapter?.title;
       if (chapter?.title) this.els.previewChapter.textContent = chapter.title;
 
-      if (this.thumbnails?.isReady) {
-        const cue = this.thumbnails.cueAt(time);
-        if (cue) {
-          this.els.previewImg.hidden = false;
-          this.els.previewImg.src = cue.url;
-          if (cue.xywh) {
-            const [cx, cy, cw, ch] = cue.xywh;
-            this.els.previewImg.style.clipPath = `inset(0)`;
-            this.els.previewImg.style.width = `${cw}px`;
-            this.els.previewImg.style.height = `${ch}px`;
-            this.els.previewImg.style.objectPosition = `-${cx}px -${cy}px`;
-          }
-        }
+      const img = this.els.previewImg;
+      const cue = this.thumbnails?.isReady ? this.thumbnails.cueAt(time) : null;
+      if (!cue) {
+        img.hidden = true;
+        return;
+      }
+
+      img.hidden = false;
+      img.src = cue.url;
+
+      if (cue.xywh) {
+        const [cx, cy, cw, ch] = cue.xywh;
+        // A sprite sheet is cropped by putting the image at its natural
+        // size in a tile-sized box and offsetting it. `object-fit` has to
+        // be `none` for that: under the default `fill` the whole sheet is
+        // stretched into the box and `object-position` does nothing, so
+        // every preview showed a squashed contact sheet.
+        img.style.objectFit = "none";
+        img.style.objectPosition = `-${cx}px -${cy}px`;
+        img.style.width = `${cw}px`;
+        img.style.height = `${ch}px`;
       } else {
-        this.els.previewImg.hidden = true;
+        // One image per cue rather than a sprite. Anything a previous
+        // sprite cue set has to go, or this stays cropped to that tile.
+        img.style.objectFit = "";
+        img.style.objectPosition = "";
+        img.style.width = "";
+        img.style.height = "";
       }
     };
 
@@ -447,18 +466,23 @@ export class ControlsController {
       this.isScrubbing = true;
       this.wasPlayingBeforeScrub = !this.video.paused;
       this.video.pause();
-      bar.setPointerCapture(e.pointerId);
+      // Capture keeps the drag alive outside the bar, but it isn't
+      // essential and it throws for a pointer the browser no longer
+      // considers active — which must not abort the seek below.
+      try {
+        bar.setPointerCapture(e.pointerId);
+      } catch {
+        /* drag still works, it just won't track outside the bar */
+      }
       bar.classList.add("is-scrubbing");
-      const time = timeFromEvent(e.clientX);
-      this.video.currentTime = time;
+      seekTo(timeFromEvent(e.clientX));
       this.updateProgress();
       void showPreview(e.clientX);
     });
 
     bar.addEventListener("pointermove", (e) => {
       if (!this.isScrubbing) return;
-      const time = timeFromEvent(e.clientX);
-      this.video.currentTime = time;
+      seekTo(timeFromEvent(e.clientX));
       this.updateProgress();
     });
 
@@ -466,7 +490,9 @@ export class ControlsController {
       if (!this.isScrubbing) return;
       this.isScrubbing = false;
       bar.classList.remove("is-scrubbing");
-      bar.releasePointerCapture(e.pointerId);
+      // `pointercancel` has already released the capture, and releasing a
+      // pointer that isn't captured throws.
+      if (bar.hasPointerCapture?.(e.pointerId)) bar.releasePointerCapture(e.pointerId);
       this.els.preview.classList.remove("is-visible");
       if (this.wasPlayingBeforeScrub) this.video.play().catch(() => {});
     };
@@ -484,20 +510,35 @@ export class ControlsController {
       } else if (e.key === "Home") {
         this.video.currentTime = 0;
         e.preventDefault();
-      } else if (e.key === "End" && Number.isFinite(this.video.duration)) {
-        this.video.currentTime = this.video.duration;
+      } else if (e.key === "End") {
+        seekTo(this.scrubbableDuration());
         e.preventDefault();
       }
     });
   }
 
+  /**
+   * How far the viewer can scrub.
+   *
+   * A live stream reports `duration` as Infinity, which turns every
+   * position calculation into Infinity or NaN — and assigning NaN to
+   * `currentTime` throws. The end of the seekable range is the real
+   * answer there, and it's what makes scrubbing a live stream work at all.
+   */
+  private scrubbableDuration(): number {
+    const { duration, seekable } = this.video;
+    if (Number.isFinite(duration)) return duration || 0;
+    return seekable && seekable.length > 0 ? seekable.end(seekable.length - 1) : 0;
+  }
+
   private seekBy(delta: number): void {
-    const duration = this.video.duration || 0;
-    this.video.currentTime = clamp(this.video.currentTime + delta, 0, duration);
+    const target = clamp(this.video.currentTime + delta, 0, this.scrubbableDuration());
+    if (Number.isFinite(target)) this.video.currentTime = target;
   }
 
   private updateProgress(): void {
-    const { currentTime, duration } = this.video;
+    const { currentTime } = this.video;
+    const duration = this.scrubbableDuration();
     const pct = duration ? clamp((currentTime / duration) * 100, 0, 100) : 0;
     this.els.fill.style.width = `${pct}%`;
     this.els.progress.setAttribute("aria-valuenow", String(Math.round(pct)));
@@ -506,7 +547,7 @@ export class ControlsController {
   }
 
   private updateBuffered(): void {
-    const duration = this.video.duration || 0;
+    const duration = this.scrubbableDuration();
     if (!duration) return;
     const end = bufferedEnd(this.video.buffered);
     this.els.buffered.style.width = `${clamp((end / duration) * 100, 0, 100)}%`;
@@ -1036,8 +1077,22 @@ export class ControlsController {
     this.root.addEventListener("keydown", this.boundKeydown);
   }
 
+  /**
+   * The focused element, resolved through the shadow root.
+   *
+   * `document.activeElement` stops at the host: focus anywhere inside the
+   * player reports as `<lumen-player>`, so guards written against it never
+   * matched. That made arrow keys on a focused progress bar seek twice —
+   * once from the bar, once from here — and arrow keys on the volume
+   * slider move it twice.
+   */
+  private activeElement(): Element | null {
+    const root = this.root.getRootNode() as ShadowRoot | Document;
+    return root instanceof ShadowRoot ? root.activeElement : this.root.ownerDocument.activeElement;
+  }
+
   private onKeydown(e: KeyboardEvent): void {
-    const activeEl = this.root.ownerDocument.activeElement;
+    const activeEl = this.activeElement();
     if (activeEl === this.els.volumeInput) return; // let the native range handle its own arrows
     if (e.metaKey || e.ctrlKey || e.altKey) return;
 
