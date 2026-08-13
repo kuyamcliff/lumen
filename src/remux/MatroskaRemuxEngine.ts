@@ -1,4 +1,5 @@
 import type { EventEmitter } from "../core/EventEmitter";
+import type { LumenAudioTrack } from "../types";
 import { MatroskaDemuxer, type MkvBlock, type MkvTrack } from "./matroska/MatroskaDemuxer";
 import { buildInitSegment, buildMediaSegment, buildMimeType, type MuxSample, type MuxTrack } from "./mp4/Mp4Muxer";
 import { buildSampleEntry, codecConfigFromMatroska } from "./mp4/sampleEntries";
@@ -37,7 +38,7 @@ interface PendingTrack {
 export class MatroskaRemuxEngine {
   private video: HTMLVideoElement;
   private emitter: EventEmitter;
-  private demuxer = new MatroskaDemuxer();
+  private demuxer: MatroskaDemuxer = new MatroskaDemuxer();
   private sink: MseSink | null = null;
   private tracks = new Map<number, PendingTrack>();
   private textTracks = new Map<number, TextTrack>();
@@ -46,15 +47,73 @@ export class MatroskaRemuxEngine {
   private muxTimescale = 1000;
   private destroyed = false;
   private started = false;
+  /** Every decodable audio track in the file, whether or not it's selected. */
+  private candidateAudio: MkvTrack[] = [];
+  private selectedAudioNumber: number | null = null;
+  private sourceUrl = "";
 
   constructor(video: HTMLVideoElement, emitter: EventEmitter) {
     this.video = video;
     this.emitter = emitter;
   }
 
+  get audioTracks(): LumenAudioTrack[] {
+    return this.candidateAudio.map((track) => ({
+      id: String(track.number),
+      label: track.name || track.language || `Track ${track.number}`,
+      language: track.language ?? "",
+      active: track.number === this.selectedAudioNumber,
+    }));
+  }
+
+  /**
+   * Switches the active audio track.
+   *
+   * A fragmented-MP4 SourceBuffer is initialized with a fixed set of
+   * tracks, so changing them means rebuilding the MediaSource — which in
+   * turn means re-reading the file. Playback resumes at the same position,
+   * but this is a heavier operation than an HLS audio switch, which just
+   * changes which segments get fetched.
+   */
+  async selectAudioTrack(id: string): Promise<void> {
+    const number = Number(id);
+    if (!this.candidateAudio.some((track) => track.number === number)) return;
+    if (number === this.selectedAudioNumber) return;
+
+    const resumeAt = this.video.currentTime;
+    const wasPlaying = !this.video.paused;
+
+    this.preferredAudioNumber = number;
+    this.resetForReload();
+
+    const ok = await this.attempt(this.sourceUrl);
+    if (!ok || this.destroyed) return;
+
+    const restore = () => {
+      this.video.currentTime = resumeAt;
+      if (wasPlaying) void this.video.play().catch(() => {});
+    };
+    if (this.video.readyState >= 1) restore();
+    else this.video.addEventListener("loadedmetadata", restore, { once: true });
+  }
+
+  private preferredAudioNumber: number | null = null;
+
+  private resetForReload(): void {
+    this.sink?.destroy();
+    this.sink = null;
+    this.demuxer = new MatroskaDemuxer();
+    this.tracks.clear();
+    this.textTracks.clear();
+    this.subtitleTracks.clear();
+    this.sequenceNumber = 1;
+    this.started = false;
+  }
+
   /** Returns true once playback has been handed off to a MediaSource. */
   async attempt(url: string): Promise<boolean> {
     if (typeof MediaSource === "undefined") return false;
+    this.sourceUrl = url;
 
     let response: Response;
     try {
@@ -113,6 +172,26 @@ export class MatroskaRemuxEngine {
 
     const playable: PendingTrack[] = [];
     const droppedCodecs: string[] = [];
+    this.candidateAudio = [];
+
+    // A file can carry several audio languages, but a fragmented-MP4
+    // SourceBuffer takes one of each kind — so every decodable audio track
+    // is catalogued for the UI, and exactly one is muxed in.
+    const audioSources = sourceTracks.filter((track) => track.type === "audio");
+    const decodableAudio = audioSources.filter((track) => codecConfigFromMatroska(track) !== null);
+    this.candidateAudio = decodableAudio;
+
+    // Audio we can't decode is recorded here rather than in the loop below,
+    // which only ever visits the one selected audio track.
+    for (const track of audioSources) {
+      if (!decodableAudio.includes(track)) droppedCodecs.push(track.codecId);
+    }
+
+    const chosenAudio =
+      decodableAudio.find((track) => track.number === this.preferredAudioNumber) ??
+      decodableAudio.find((track) => track.isDefault) ??
+      decodableAudio[0];
+    this.selectedAudioNumber = chosenAudio?.number ?? null;
 
     for (const source of sourceTracks) {
       if (source.type === "subtitle") {
@@ -120,6 +199,7 @@ export class MatroskaRemuxEngine {
         continue;
       }
       if (source.type !== "video" && source.type !== "audio") continue;
+      if (source.type === "audio" && source !== chosenAudio) continue;
 
       const config = codecConfigFromMatroska(source);
       if (!config) {

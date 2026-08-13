@@ -32,19 +32,27 @@ export function renderShell(): string {
              aria-label="Seek" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-el="progress">
           <div class="lumen-preview" data-el="preview">
             <img data-el="preview-img" alt="" />
+            <span class="lumen-preview-chapter" data-el="preview-chapter" hidden></span>
             <span class="lumen-preview-time" data-el="preview-time">0:00</span>
           </div>
           <div class="lumen-progress-track">
             <div class="lumen-progress-buffered" data-el="buffered"></div>
             <div class="lumen-progress-fill" data-el="fill"></div>
+            <div class="lumen-progress-chapters" data-el="chapter-marks"></div>
             <div class="lumen-progress-thumb"></div>
           </div>
         </div>
 
         <div class="lumen-row">
           <div class="lumen-row-start">
+            <button type="button" class="lumen-btn" part="button" data-action="previous" aria-label="Previous" hidden>
+              ${icon("previous")}
+            </button>
             <button type="button" class="lumen-btn" part="button" data-action="play-pause" aria-label="Play">
               ${icon("play")}
+            </button>
+            <button type="button" class="lumen-btn" part="button" data-action="next" aria-label="Next" hidden>
+              ${icon("next")}
             </button>
             <div class="lumen-volume">
               <button type="button" class="lumen-btn" part="button" data-action="mute" aria-label="Mute">
@@ -62,6 +70,9 @@ export function renderShell(): string {
           <div class="lumen-row-end">
             <button type="button" class="lumen-btn" part="button" data-action="captions-toggle" aria-label="Captions" aria-pressed="false" hidden>
               ${icon("captions")}
+            </button>
+            <button type="button" class="lumen-btn" part="button" data-action="cast" aria-label="Cast" hidden>
+              ${icon("cast")}
             </button>
             <button type="button" class="lumen-btn" part="button" data-action="pip" aria-label="Picture in picture" hidden>
               ${icon("pip")}

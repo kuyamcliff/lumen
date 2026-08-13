@@ -27,6 +27,32 @@ export interface LumenTextTrackInit {
   default?: boolean;
 }
 
+export interface LumenChapter {
+  start: number;
+  end: number;
+  title: string;
+}
+
+export interface LumenAudioTrack {
+  id: string;
+  label: string;
+  language: string;
+  active: boolean;
+}
+
+/** One entry in a playlist. `src` accepts the same shapes as `player.load()`. */
+export interface LumenPlaylistItem {
+  src: string | LumenSource | LumenSource[];
+  title?: string;
+  poster?: string;
+  /** External subtitle tracks for this item. */
+  tracks?: LumenTextTrackInit[];
+  /** WebVTT thumbnail sprite for scrub previews. */
+  thumbnails?: string;
+  /** WebVTT chapters file. */
+  chapters?: string;
+}
+
 export type LumenErrorCode =
   | "NETWORK"
   | "DECODE"
@@ -86,6 +112,14 @@ export type LumenEventMap = {
   texttrackchange: { track: TextTrack | null };
   /** A text track discovered inside the media file itself (e.g. MKV subtitles). */
   embeddedtexttrack: { track: TextTrack };
+  chapterschange: { chapters: LumenChapter[] };
+  chapterchange: { chapter: LumenChapter | null };
+  audiotrackschange: { tracks: LumenAudioTrack[] };
+  audiotrackchange: { track: LumenAudioTrack | null };
+  playlistchange: { items: LumenPlaylistItem[] };
+  /** Fired when the playlist advances, manually or automatically. */
+  playlistitemchange: { item: LumenPlaylistItem; index: number };
+  castavailabilitychange: { available: boolean };
   enterfullscreen: undefined;
   exitfullscreen: undefined;
   enterpip: undefined;

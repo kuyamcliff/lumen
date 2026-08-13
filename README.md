@@ -6,7 +6,7 @@ Lumen is a web-first, framework-agnostic video player built as a native
 Web Component. Drop in one tag and it plays **MP4, MOV, MKV, WebM, Ogg,
 MPEG-TS and HLS** — including formats no browser supports natively — with a
 premium default UI, deep subtitle customization, and a clean TypeScript API,
-from a core bundle under **19 kB gzipped**.
+from a core bundle under **24 kB gzipped**.
 
 ```html
 <script type="module" src="https://unpkg.com/@lumen/player/dist/lumen.js"></script>
@@ -37,7 +37,7 @@ import "@lumen/player";
   every browser's `<video>` element. Lumen identifies a file by its bytes
   and, where the container is the only obstacle, rebuilds it as fragmented
   MP4 in JavaScript — no transcoding, no WASM decoder, no quality loss.
-- **Tiny core.** ~18.4 kB gzipped with zero required runtime dependencies.
+- **Tiny core.** ~23 kB gzipped with zero required runtime dependencies.
   HLS (`hls.js`), the corrupt-MP4 fallback (`mp4box`) and the Matroska
   remuxer are optional, lazily-loaded layers — pages that don't need them
   never pay for them.
@@ -123,7 +123,11 @@ and use the `CONTAINER_UNSUPPORTED` error to prompt for it.
 | CSS custom-property theming, dark/light/system themes | ✅ |
 | Network/decode error recovery with backoff, calm error UI | ✅ (see [Resilience](#resilience)) |
 | Best-effort playback of truncated/corrupt progressive MP4s via `mp4box.js` + MSE | ✅ (see [Resilience](#resilience)) |
-| Chapters, playlists, multi-audio-track, casting | 🚧 not yet — tracked as v1.x |
+| Chapters — progress-bar markers, scrub titles, jump menu | ✅ |
+| Playlists with auto-advance and next/previous controls | ✅ |
+| Audio track selection (HLS, native, and MKV) | ✅ |
+| Casting — AirPlay and the Remote Playback API | ✅ |
+| Full internationalization of every UI string | ✅ |
 | DASH, DRM, ads | ⬜ intentionally out of scope for the MIT core (future optional modules) |
 
 ## Quick start
@@ -149,8 +153,9 @@ the browser can play it):
 ```
 
 See `examples/` for runnable pages: `basic.html`, `hls.html`,
-`subtitles.html`, `theming.html`, `formats.html`, `resilience.html`. Run `npm run dev` and
-open them from the printed local URL.
+`subtitles.html`, `theming.html`, `formats.html`, `resilience.html`,
+`playlist.html`, `i18n.html` — or open `examples/index.html` for an index
+of all of them. Run `npm run dev` and open it from the printed local URL.
 
 > `resilience.html` needs a real H.264/AAC-capable browser (regular Chrome,
 > Edge, Firefox, Safari). Minimal open-source Chromium builds — including
@@ -191,6 +196,32 @@ player.textTracks;                       // TextTrack[]
 player.addTextTrack({ src: "fr.vtt", label: "Français", srclang: "fr" });
 player.setSubtitlePrefs({ fontSize: 1.3, edge: "outline", offsetSeconds: 0.5 });
 
+// Audio tracks (HLS, native, or MKV)
+player.audioTracks;            // LumenAudioTrack[]
+player.setAudioTrack("fr");
+
+// Chapters
+player.chapters;               // LumenChapter[]
+player.currentChapter;         // LumenChapter | null
+player.setChapters([{ start: 0, end: 60, title: "Intro" }]);
+
+// Playlists — auto-advances when each item ends
+player.playlist = [
+  { src: "one.mkv", title: "First", chapters: "one.vtt" },
+  { src: "two.mp4", title: "Second", poster: "two.jpg" },
+];
+player.next();
+player.previous();
+player.playItem(1);
+player.playlistIndex;
+
+// Casting (AirPlay / Remote Playback)
+player.isCastAvailable;
+await player.requestCast();
+
+// Translation — omitted keys fall back to English
+player.setTranslations({ play: "Lecture", settings: "Réglages" });
+
 // Events
 const off = player.on("timeupdate", ({ currentTime, duration }) => { /* ... */ });
 player.once("ready", () => console.log("mounted"));
@@ -207,7 +238,10 @@ player.destroy(); // tear down engine + listeners
 
 `play`, `pause`, `ended`, `timeupdate`, `progress`, `volumechange`,
 `ratechange`, `waiting`, `playing`, `canplay`, `seeking`, `seeked`, `error`,
-`qualitychange`, `qualitieschange`, `texttrackchange`, `enterfullscreen`,
+`qualitychange`, `qualitieschange`, `texttrackchange`,
+`embeddedtexttrack`, `chapterschange`, `chapterchange`,
+`audiotrackschange`, `audiotrackchange`, `playlistchange`,
+`playlistitemchange`, `castavailabilitychange`, `enterfullscreen`,
 `exitfullscreen`, `enterpip`, `leavepip`, `loadedmetadata`, `ready`,
 `destroy`. Full payload types are in `src/types.ts`.
 
@@ -216,7 +250,26 @@ player.destroy(); // tear down engine + listeners
 `src`, `poster`, `autoplay`, `loop`, `muted`, `crossorigin`, `preload`,
 `theme` (`dark` | `light` | `system`), `aspect-ratio` (e.g. `16/9`),
 `object-fit` (e.g. `contain` | `cover`), `thumbnails` (URL to a WebVTT
-sprite sheet, the format used by Mux/Bunny/Vimeo-style scrub previews).
+sprite sheet, the format used by Mux/Bunny/Vimeo-style scrub previews),
+`chapters` (URL to a WebVTT chapters file).
+
+### Internationalization
+
+Every control label, menu entry, screen-reader announcement and error
+message resolves through one string table, so the player can be translated
+without forking it or reaching into the shadow DOM:
+
+```js
+player.setTranslations({
+  play: "再生",
+  pause: "一時停止",
+  settings: "設定",
+});
+```
+
+Any key you leave out keeps its English default, so a partial translation
+degrades to mixed language rather than blank buttons. The full key list is
+the `LumenStrings` interface in `src/i18n.ts`.
 
 ## Theming
 
@@ -313,8 +366,12 @@ src/
       boxes.ts             ISO-BMFF box-writing primitives
       Mp4Muxer.ts          fMP4 init + media segment generation
       sampleEntries.ts     codec → sample entry + RFC 6381 codec string
+  media/
+    ChapterManager.ts      WebVTT chapters, markers, jump targets
+    CastController.ts      AirPlay + Remote Playback availability
   subtitles/
     SubtitleManager.ts     track discovery, switching, styling, persistence
+  i18n.ts                  every user-visible string, with fallbacks
   ui/
     template.ts             shadow-DOM shell
     ControlsController.ts   all interaction wiring (the biggest module)
@@ -358,11 +415,13 @@ Following the PRD's phase plan:
 - **Phase 3 (mostly done):** default theme, micro-interactions, loading/
   error states, a11y, mobile touch, scrub preview (thumbnails supported,
   sprite-sheet only).
-- **Phase 4 (partial):** public API/events/types are stable; a full docs
-  site, expanded automated test coverage (visual regression, real-device
-  matrix), and npm/CDN release automation are follow-up work.
-- **Phase 5 (not started):** playlists, chapters, casting, framework
-  wrappers, DASH/DRM/ads as optional modules.
+- **Phase 4 (mostly done):** public API/events/types are stable, the UI is
+  fully internationalized, and `CONTRIBUTING.md` documents the
+  architecture and conventions. A hosted docs site, visual-regression
+  tests, a real-device matrix and npm/CDN release automation remain.
+- **Phase 5 (mostly done):** playlists, chapters, audio-track selection and
+  casting hooks are implemented. Framework wrappers and DASH/DRM/ads
+  optional modules remain — all explicitly "future" in the PRD.
 
 Known gaps in the remux layer, listed plainly:
 

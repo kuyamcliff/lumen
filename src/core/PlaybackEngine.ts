@@ -1,7 +1,7 @@
 import type HlsType from "hls.js";
 import type { ErrorData } from "hls.js";
 import type { EventEmitter } from "./EventEmitter";
-import type { LumenError, LumenQualityLevel, LumenSource, LumenSourceType } from "../types";
+import type { LumenAudioTrack, LumenError, LumenQualityLevel, LumenSource, LumenSourceType } from "../types";
 import { RETRY_BACKOFF_MS, delay } from "../utils/retry";
 import { ResilientMp4Engine } from "./ResilientMp4Engine";
 import { containerLabel, probeContainer, type ContainerKind } from "./containers";
@@ -11,6 +11,16 @@ declare global {
   interface Window {
     Hls?: typeof HlsType;
   }
+}
+
+/**
+ * Minimal shape of the `AudioTrackList` API. TypeScript's DOM lib omits it
+ * because support is uneven (Safari implements it; Chrome does not), but
+ * where it exists it's the only way to switch audio on native playback.
+ */
+interface AudioTrackListLike {
+  readonly length: number;
+  [index: number]: { id: string; label: string; language: string; enabled: boolean };
 }
 
 // WHATWG MediaError codes (https://html.spec.whatwg.org/#error-codes), used
@@ -152,6 +162,67 @@ export class PlaybackEngine {
     this.hls.currentLevel = id === "auto" ? -1 : id;
     const level = id === "auto" ? null : this._qualityLevels.find((l) => l.id === id) ?? null;
     this.emitter.emit("qualitychange", { level, auto: id === "auto" });
+  }
+
+  /**
+   * Audio tracks from whichever pipeline is driving playback: hls.js for
+   * adaptive streams, the element's own `audioTracks` where the browser
+   * implements it (Safari), or the Matroska remuxer for MKV.
+   */
+  get audioTracks(): LumenAudioTrack[] {
+    if (this.hls) {
+      return this.hls.audioTracks.map((track, index) => ({
+        id: String(track.id ?? index),
+        label: track.name || track.lang || `Track ${index + 1}`,
+        language: track.lang ?? "",
+        active: this.hls?.audioTrack === (track.id ?? index),
+      }));
+    }
+
+    if (this.matroskaEngine) return this.matroskaEngine.audioTracks;
+
+    const native = (this.video as HTMLVideoElement & { audioTracks?: AudioTrackListLike }).audioTracks;
+    if (native && native.length > 0) {
+      return Array.from({ length: native.length }, (_, index) => {
+        const track = native[index]!;
+        return {
+          id: track.id || String(index),
+          label: track.label || track.language || `Track ${index + 1}`,
+          language: track.language ?? "",
+          active: track.enabled,
+        };
+      });
+    }
+
+    return [];
+  }
+
+  setAudioTrack(id: string): void {
+    if (this.hls) {
+      const index = this.hls.audioTracks.findIndex((track, i) => String(track.id ?? i) === id);
+      if (index >= 0) this.hls.audioTrack = this.hls.audioTracks[index]!.id ?? index;
+      this.emitAudioTrackChange(id);
+      return;
+    }
+
+    if (this.matroskaEngine) {
+      void this.matroskaEngine.selectAudioTrack(id).then(() => this.emitAudioTrackChange(id));
+      return;
+    }
+
+    const native = (this.video as HTMLVideoElement & { audioTracks?: AudioTrackListLike }).audioTracks;
+    if (native) {
+      for (let i = 0; i < native.length; i++) {
+        const track = native[i]!;
+        track.enabled = (track.id || String(i)) === id;
+      }
+      this.emitAudioTrackChange(id);
+    }
+  }
+
+  private emitAudioTrackChange(id: string): void {
+    const track = this.audioTracks.find((t) => t.id === id) ?? null;
+    this.emitter.emit("audiotrackchange", { track });
   }
 
   async load(sources: LumenSource[]): Promise<void> {

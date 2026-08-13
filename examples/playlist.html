@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lumen — Playlists &amp; chapters</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <style>
+      .queue {
+        list-style: none;
+        padding: 0;
+        margin: 16px 0 0;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .queue li {
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        font-size: 0.9rem;
+      }
+      .queue li[aria-current="true"] {
+        border-color: #eab54c;
+        color: #eab54c;
+      }
+      .queue .badge {
+        color: rgba(240, 240, 242, 0.5);
+        font-size: 0.78rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Playlists &amp; chapters</h1>
+      <p>
+        A playlist advances automatically, and each entry carries its own
+        poster, subtitles and chapter markers. Chapters appear as dividers
+        on the progress bar, as titles while scrubbing, and as a jump menu
+        under Settings.
+      </p>
+
+      <lumen-player id="player"></lumen-player>
+
+      <ul class="queue" id="queue"></ul>
+
+      <h2>The API</h2>
+      <pre><code>player.playlist = [
+  { src: "one.mp4", title: "First", poster: "one.jpg", chapters: "one.vtt" },
+  { src: "two.mkv", title: "Second", tracks: [{ src: "en.vtt", label: "English", srclang: "en" }] },
+];
+
+player.next();
+player.previous();
+player.playItem(2);
+
+player.on("playlistitemchange", ({ item, index }) => console.log(index, item.title));
+player.on("chapterchange", ({ chapter }) => console.log(chapter?.title));</code></pre>
+    </main>
+
+    <script type="module">
+      import "/src/index.ts";
+
+      const player = document.getElementById("player");
+      const queue = document.getElementById("queue");
+
+      const items = [
+        {
+          src: "./media/sample-vp9.mkv",
+          title: "Big Buck Bunny (MKV, remuxed)",
+          chapters: "./media/chapters.vtt",
+          tracks: [{ src: "./media/sample-en.vtt", label: "English", srclang: "en" }],
+        },
+        {
+          src: "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.webm",
+          title: "Flower (WebM)",
+        },
+        {
+          src: "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
+          title: "Flower (MP4)",
+        },
+      ];
+
+      const render = (activeIndex) => {
+        queue.replaceChildren();
+        items.forEach((item, index) => {
+          const li = document.createElement("li");
+          li.setAttribute("aria-current", String(index === activeIndex));
+          li.innerHTML = `<span>${item.title}</span><span class="badge">${index === activeIndex ? "playing" : "queued"}</span>`;
+          li.addEventListener("click", () => player.playItem(index));
+          queue.appendChild(li);
+        });
+      };
+
+      player.on("playlistitemchange", ({ index }) => render(index));
+      player.on("chapterchange", ({ chapter }) => {
+        if (chapter) console.log("chapter:", chapter.title);
+      });
+
+      player.playlist = items;
+      render(0);
+    </script>
+  </body>
+</html>
