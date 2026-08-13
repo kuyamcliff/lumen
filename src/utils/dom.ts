@@ -34,3 +34,21 @@ export function uniqueId(prefix: string): string {
   idCounter += 1;
   return `${prefix}-${idCounter}-${Math.random().toString(36).slice(2, 7)}`;
 }
+
+/**
+ * Starts playback and always hands back a promise.
+ *
+ * `HTMLMediaElement.play()` was specified to return one only in 2016;
+ * older WebKit and several embedded browsers still return `undefined`, so
+ * the near-universal `video.play().catch(…)` throws a TypeError there —
+ * and it throws in the failure path, exactly where the code was trying to
+ * be careful. Autoplay rejections are the norm, so every call site needs
+ * something it can attach to.
+ */
+export function safePlay(video: HTMLMediaElement): Promise<void> {
+  try {
+    return Promise.resolve(video.play() as Promise<void> | undefined).then(() => {});
+  } catch (error) {
+    return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+  }
+}

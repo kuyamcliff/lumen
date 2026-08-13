@@ -6,7 +6,7 @@ import type { CastController } from "../media/CastController";
 import type { Translator } from "../i18n";
 import type { LumenError } from "../types";
 import { bufferedEnd, clamp, formatTime } from "../utils/time";
-import { isCoarsePointer } from "../utils/dom";
+import { isCoarsePointer, safePlay } from "../utils/dom";
 import { icon } from "./icons";
 import { ThumbnailTrack } from "./Thumbnails";
 import {
@@ -388,7 +388,7 @@ export class ControlsController {
 
   private togglePlay(): void {
     if (this.video.paused || this.video.ended) {
-      this.video.play().catch(() => this.announce(this.strings.t("playbackBlocked")));
+      safePlay(this.video).catch(() => this.announce(this.strings.t("playbackBlocked")));
     } else {
       this.video.pause();
     }
@@ -494,7 +494,7 @@ export class ControlsController {
       // pointer that isn't captured throws.
       if (bar.hasPointerCapture?.(e.pointerId)) bar.releasePointerCapture(e.pointerId);
       this.els.preview.classList.remove("is-visible");
-      if (this.wasPlayingBeforeScrub) this.video.play().catch(() => {});
+      if (this.wasPlayingBeforeScrub) void safePlay(this.video).catch(() => {});
     };
     bar.addEventListener("pointerup", endScrub);
     bar.addEventListener("pointercancel", endScrub);

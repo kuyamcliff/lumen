@@ -7,6 +7,7 @@ import { ControlsController } from "./ui/ControlsController";
 import { ChapterManager } from "./media/ChapterManager";
 import { CastController } from "./media/CastController";
 import { enterFullscreen, exitFullscreen, isFullscreen } from "./media/fullscreen";
+import { safePlay } from "./utils/dom";
 import { Translator, type LumenStrings } from "./i18n";
 import { DrmController, type LumenDrmConfig } from "./core/DrmController";
 import type { LumenPlugin } from "./plugins/types";
@@ -37,7 +38,6 @@ const OBSERVED = [
   "object-fit",
   "thumbnails",
   "chapters",
-  "lang",
 ] as const;
 
 /**
@@ -206,6 +206,12 @@ export class LumenPlayer extends HTMLElement {
       case "thumbnails":
         void this.controls.setThumbnails(newValue);
         break;
+      case "chapters":
+        // Observed but never handled: pointing the attribute at a new VTT
+        // after mount left the old chapters in place.
+        this.chapterManager.reset();
+        if (newValue) this.chapterManager.addTrackElement(newValue);
+        break;
       default:
         break;
     }
@@ -220,14 +226,16 @@ export class LumenPlayer extends HTMLElement {
 
   private applyAspectRatio(): void {
     const ratio = this.getAttribute("aspect-ratio");
-    if (ratio) {
-      this.style.setProperty("--lumen-aspect-ratio", ratio.replace("/", " / "));
-    }
+    // Removing the attribute has to remove the property too, or the shape
+    // set once could never be undone.
+    if (ratio) this.style.setProperty("--lumen-aspect-ratio", ratio.replace("/", " / "));
+    else this.style.removeProperty("--lumen-aspect-ratio");
   }
 
   private applyObjectFit(): void {
     const fit = this.getAttribute("object-fit");
     if (fit) this.style.setProperty("--lumen-object-fit", fit);
+    else this.style.removeProperty("--lumen-object-fit");
   }
 
   private ingestLightDomSources(): void {
@@ -271,7 +279,7 @@ export class LumenPlayer extends HTMLElement {
   }
 
   play(): Promise<void> {
-    return this.video.play();
+    return safePlay(this.video);
   }
 
   pause(): void {
@@ -357,7 +365,7 @@ export class LumenPlayer extends HTMLElement {
     await this.load(item.src);
     // Autoplay only once the playlist is already rolling, so setting a
     // playlist doesn't start playback the user never asked for.
-    if (index > 0) void this.video.play().catch(() => {});
+    if (index > 0) void safePlay(this.video).catch(() => {});
   }
 
   next(): void {
@@ -370,6 +378,9 @@ export class LumenPlayer extends HTMLElement {
 
   private clearItemState(): void {
     this.subtitles.setActiveTrack(null);
+    // Including the thumbnail track: an item without its own sprite sheet
+    // used to keep showing the previous item's frames on hover.
+    void this.controls.setThumbnails(null);
     for (const element of Array.from(this.video.querySelectorAll("track"))) {
       element.remove();
     }

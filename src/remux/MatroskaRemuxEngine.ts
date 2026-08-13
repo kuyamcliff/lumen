@@ -4,6 +4,7 @@ import { MatroskaDemuxer, type MkvBlock, type MkvCuePoint, type MkvTrack } from 
 import { buildInitSegment, buildMediaSegment, buildMimeType, type MuxSample, type MuxTrack } from "./mp4/Mp4Muxer";
 import { buildSampleEntry, codecConfigFromMatroska } from "./mp4/sampleEntries";
 import { MseSink } from "./MseSink";
+import { safePlay } from "../utils/dom";
 
 /**
  * Timestamps are scaled up from Matroska's ticks (1ms by default) to
@@ -95,7 +96,7 @@ export class MatroskaRemuxEngine {
 
     const restore = () => {
       this.video.currentTime = resumeAt;
-      if (wasPlaying) void this.video.play().catch(() => {});
+      if (wasPlaying) void safePlay(this.video).catch(() => {});
     };
     if (this.video.readyState >= 1) restore();
     else this.video.addEventListener("loadedmetadata", restore, { once: true });

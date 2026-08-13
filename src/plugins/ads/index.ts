@@ -1,5 +1,6 @@
 import type { LumenPlayer } from "../../LumenPlayer";
 import type { LumenPlugin } from "../types";
+import { safePlay } from "../../utils/dom";
 import {
   fireBeacon,
   fireBeacons,
@@ -162,7 +163,7 @@ class AdController {
     this.adVideo.src = media.url;
 
     try {
-      await this.adVideo.play();
+      await safePlay(this.adVideo);
     } catch {
       // Autoplay policy blocked the ad; return to content rather than
       // stalling behind an ad the viewer can't dismiss.
