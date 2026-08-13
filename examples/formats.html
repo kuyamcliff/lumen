@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lumen — Any video format</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <style>
+      .log {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.78rem;
+        color: rgba(240, 240, 242, 0.6);
+        white-space: pre-wrap;
+        margin-top: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Any video format</h1>
+      <p>
+        Lumen identifies a file by its actual bytes, not its extension, and
+        routes it to whatever can play it: straight to the browser when
+        possible, or through a JavaScript demuxer that rebuilds the
+        container as fragmented MP4 for Media Source Extensions. No
+        transcoding, no WASM decoder — the compressed frames are copied
+        across untouched.
+      </p>
+
+      <h2>Matroska (.mkv)</h2>
+      <p>
+        No browser plays Matroska natively. This one is remuxed to
+        fragmented MP4 on the fly while it downloads.
+      </p>
+      <lumen-player id="mkv" src="./media/sample-vp9.mkv"></lumen-player>
+      <div class="log" id="mkv-log"></div>
+
+      <h2>Progressive MP4</h2>
+      <p>Native playback — the fast path, with no sniffing round trip.</p>
+      <lumen-player
+        id="mp4"
+        src="https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"
+      ></lumen-player>
+      <div class="log" id="mp4-log"></div>
+
+      <h2>What happens to a format nobody can decode</h2>
+      <p>
+        Containers that genuinely can't be played in a browser (AVI, WMV,
+        FLV) are detected and reported in plain language, rather than
+        failing with a blank player.
+      </p>
+      <pre><code>player.on("error", ({ code, message }) => {
+  if (code === "CONTAINER_UNSUPPORTED") {
+    // e.g. "AVI files can't be played in a browser.
+    //       Converting this to MP4 or WebM will fix it."
+    showTranscodePrompt(message);
+  }
+});</code></pre>
+    </main>
+
+    <script type="module">
+      import "/src/index.ts";
+
+      for (const id of ["mkv", "mp4"]) {
+        const player = document.getElementById(id);
+        const log = document.getElementById(`${id}-log`);
+        const write = (line) => {
+          log.textContent += (log.textContent ? "\n" : "") + line;
+        };
+
+        player.on("error", (e) => write(`${e.fatal ? "error" : "notice"}: ${e.message}`));
+        player.on("loadedmetadata", ({ duration }) => write(`loadedmetadata — duration ${duration.toFixed(2)}s`));
+        player.on("playing", () => write("playing"));
+        player.on("embeddedtexttrack", ({ track }) => write(`embedded subtitles: ${track.label}`));
+      }
+    </script>
+  </body>
+</html>

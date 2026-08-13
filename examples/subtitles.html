@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lumen — Subtitles &amp; captions</title>
+    <link rel="stylesheet" href="./shared.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Subtitles &amp; captions</h1>
+      <p>
+        Drop in <code>&lt;track&gt;</code> children exactly like native
+        <code>&lt;video&gt;</code>. Lumen auto-detects them, remembers the
+        viewer's last choice, and renders cues through its own overlay so
+        styling (size, color, background, edge, position, timing offset) is
+        fully under your control — open the Settings → Captions →
+        Appearance menu to try it.
+      </p>
+
+      <lumen-player
+        src="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+        poster="https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/images/BigBuckBunny.jpg"
+      >
+        <track kind="subtitles" src="./media/sample-en.vtt" srclang="en" label="English" default />
+        <track kind="subtitles" src="./media/sample-fr.vtt" srclang="fr" label="Français" />
+      </lumen-player>
+
+      <h2>Styling from JS</h2>
+      <pre><code>player.setSubtitlePrefs({
+  fontSize: 1.3,
+  color: "#fff",
+  background: "#000",
+  backgroundOpacity: 0.7,
+  edge: "outline",
+  position: "top",
+  offsetSeconds: 0.5, // shift cues later by 500ms
+});</code></pre>
+    </main>
+
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>

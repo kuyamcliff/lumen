@@ -1,0 +1,67 @@
+{
+  "name": "@lumen/player",
+  "version": "0.1.0",
+  "description": "Beautiful. Simple. Unbreakable. Lightweight. A web-first video player built on Web Components.",
+  "type": "module",
+  "license": "MIT",
+  "author": "",
+  "homepage": "https://github.com/kuyamcliff/lumen",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kuyamcliff/lumen.git"
+  },
+  "keywords": [
+    "video",
+    "player",
+    "html5-video",
+    "hls",
+    "web-component",
+    "media-player"
+  ],
+  "main": "./dist/lumen.umd.cjs",
+  "module": "./dist/lumen.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/lumen.js",
+      "require": "./dist/lumen.umd.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": [
+    "./src/index.ts"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.build.json && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "size": "npm run build && node scripts/check-size.mjs"
+  },
+  "peerDependencies": {
+    "hls.js": "^1.5.0",
+    "mp4box": "^2.4.0"
+  },
+  "peerDependenciesMeta": {
+    "hls.js": {
+      "optional": true
+    },
+    "mp4box": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "hls.js": "^1.5.15",
+    "jsdom": "^30.0.1",
+    "mp4box": "^2.4.1",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.2",
+    "vitest": "^2.0.5"
+  }
+}

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lumen — Resilient playback</title>
+    <link rel="stylesheet" href="./shared.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Resilient playback</h1>
+      <p>
+        <code>media/truncated-sample.mp4</code> is a real MP4 (moov box
+        intact) whose <code>mdat</code> was cut off partway through — the
+        signature of an interrupted upload to object storage. Most players
+        just show a broken screen. Lumen retries, then falls back to
+        streaming the file through <code>mp4box.js</code> into a
+        <code>MediaSource</code>, so everything before the cut still plays.
+      </p>
+
+      <lumen-player id="player" src="./media/truncated-sample.mp4"></lumen-player>
+
+      <p id="status" style="font-size: 0.85rem; color: rgba(240,240,242,0.6)"></p>
+    </main>
+
+    <script type="module">
+      // mp4box.js doesn't ship a CDN-friendly UMD global build the way
+      // hls.js does, so plain-script-tag pages that want the resilient
+      // fallback wire it up like this: import it however you can (a
+      // bundler, or a module CDN) and assign it to `window.MP4Box` before
+      // playback starts. Bundler consumers can skip this — Lumen's dynamic
+      // `import("mp4box")` resolves straight from node_modules for them.
+      import * as MP4Box from "mp4box";
+      window.MP4Box = MP4Box;
+
+      import "/src/index.ts";
+
+      const player = document.getElementById("player");
+      const status = document.getElementById("status");
+      const log = (msg) => {
+        status.textContent += (status.textContent ? "\n" : "") + msg;
+      };
+
+      player.on("error", (e) => log(`error: ${e.message} (fatal=${e.fatal}, code=${e.code})`));
+      player.on("playing", () => log("playing"));
+      player.on("waiting", () => log("waiting"));
+    </script>
+  </body>
+</html>
