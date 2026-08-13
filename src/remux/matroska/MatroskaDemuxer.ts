@@ -19,6 +19,14 @@ export interface MkvTrack {
   bitDepth?: number;
 }
 
+/** One entry of the Cues index: a time, and where its cluster begins. */
+export interface MkvCuePoint {
+  /** Timestamp in TimestampScale ticks. */
+  time: number;
+  /** Byte offset of the cluster, relative to the start of Segment data. */
+  clusterPosition: number;
+}
+
 export interface MkvBlock {
   trackNumber: number;
   /** Absolute timestamp, in TimestampScale ticks. */
@@ -45,6 +53,9 @@ const DEFAULT_TIMESTAMP_SCALE_NS = 1_000_000;
 export class MatroskaDemuxer {
   onTracks?: (tracks: MkvTrack[], timestampScaleNs: number) => void;
   onBlock?: (block: MkvBlock) => void;
+  onCues?: (cues: MkvCuePoint[]) => void;
+  /** Fires when a SeekHead points at a Cues element we haven't read yet. */
+  onCuesLocation?: (absolutePosition: number) => void;
   onError?: (message: string) => void;
 
   // Typed as ArrayBufferLike-backed so chunks handed over by fetch() can be
@@ -58,6 +69,17 @@ export class MatroskaDemuxer {
   private tracks: MkvTrack[] = [];
   private tracksEmitted = false;
   private failed = false;
+  private cues: MkvCuePoint[] = [];
+  /** Absolute file offset where Segment *data* begins; Cues positions are relative to it. */
+  private segmentDataStart = 0;
+  private cuesLocationReported = false;
+
+  /**
+   * Byte offset in the file that buffer[0] corresponds to. Set when the
+   * demuxer is fed a range that doesn't start at the beginning of the file,
+   * which is how seeking works.
+   */
+  fileOffset = 0;
 
   append(chunk: Uint8Array): void {
     if (this.failed) return;
@@ -77,6 +99,15 @@ export class MatroskaDemuxer {
 
   get timestampScale(): number {
     return this.timestampScaleNs;
+  }
+
+  /**
+   * Carries the TimestampScale over to a demuxer that starts mid-file.
+   * A ranged read begins after the Info element, so it would otherwise
+   * fall back to the default and misplace every timestamp.
+   */
+  seedTimestampScale(scaleNs: number): void {
+    this.timestampScaleNs = scaleNs || DEFAULT_TIMESTAMP_SCALE_NS;
   }
 
   private fail(message: string): void {
@@ -108,6 +139,7 @@ export class MatroskaDemuxer {
       // buffered whole — notably Segment, which is routinely written with
       // an unknown size and can be gigabytes long.
       if (id.value === ID.Segment) {
+        this.segmentDataStart = this.fileOffset + this.consumed + contentStart;
         this.position = contentStart;
         continue;
       }
@@ -138,6 +170,12 @@ export class MatroskaDemuxer {
           break;
         case ID.Cluster:
           this.parseCluster(contentStart, contentEnd);
+          break;
+        case ID.Cues:
+          this.parseCues(contentStart, contentEnd);
+          break;
+        case ID.SeekHead:
+          this.parseSeekHead(contentStart, contentEnd);
           break;
         default:
           break; // Cues, Tags, Chapters, SeekHead, Attachments — skipped
@@ -220,6 +258,79 @@ export class MatroskaDemuxer {
     });
 
     return track.number > 0 && track.codecId ? track : null;
+  }
+
+  /**
+   * Reads the Cues index — the table that makes seeking possible without
+   * downloading everything before the target.
+   */
+  private parseCues(start: number, end: number): void {
+    const cues: MkvCuePoint[] = [];
+
+    this.forEachChild(start, end, (id, contentStart, length) => {
+      if (id !== ID.CuePoint) return;
+
+      let time = -1;
+      let clusterPosition = -1;
+      this.forEachChild(contentStart, contentStart + length, (cueId, cueStart, cueLength) => {
+        if (cueId === ID.CueTime) {
+          time = readUint(this.buffer, cueStart, cueLength);
+        } else if (cueId === ID.CueTrackPositions) {
+          this.forEachChild(cueStart, cueStart + cueLength, (posId, posStart, posLength) => {
+            // The first track's position is enough: clusters are shared,
+            // so every track in a cue points at the same cluster.
+            if (posId === ID.CueClusterPosition && clusterPosition < 0) {
+              clusterPosition = readUint(this.buffer, posStart, posLength);
+            }
+          });
+        }
+      });
+
+      if (time >= 0 && clusterPosition >= 0) cues.push({ time, clusterPosition });
+    });
+
+    if (cues.length === 0) return;
+    cues.sort((a, b) => a.time - b.time);
+    this.cues = cues;
+    this.onCues?.(cues);
+  }
+
+  /**
+   * Reads a SeekHead to find where Cues lives.
+   *
+   * Muxers usually write Cues at the *end* of the file, so without this
+   * pointer the index would only be discoverable by downloading
+   * everything — precisely what the index exists to avoid.
+   */
+  private parseSeekHead(start: number, end: number): void {
+    if (this.cuesLocationReported) return;
+
+    this.forEachChild(start, end, (id, contentStart, length) => {
+      if (id !== ID.Seek) return;
+
+      let seekId = 0;
+      let seekPosition = -1;
+      this.forEachChild(contentStart, contentStart + length, (childId, childStart, childLength) => {
+        if (childId === ID.SeekID) {
+          seekId = readUint(this.buffer, childStart, childLength);
+        } else if (childId === ID.SeekPosition) {
+          seekPosition = readUint(this.buffer, childStart, childLength);
+        }
+      });
+
+      if (seekId === ID.Cues && seekPosition >= 0) {
+        this.cuesLocationReported = true;
+        this.onCuesLocation?.(this.segmentDataStart + seekPosition);
+      }
+    });
+  }
+
+  get cuePoints(): MkvCuePoint[] {
+    return this.cues;
+  }
+
+  get segmentStart(): number {
+    return this.segmentDataStart;
   }
 
   private parseCluster(start: number, end: number): void {

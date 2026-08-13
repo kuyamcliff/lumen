@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Events — Lumen</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar"></aside>
+      <main>
+<h1>Events</h1>
+<p class="lede">Subscribe with <code>player.on(name, handler)</code>, which
+returns an unsubscribe function. Every payload is fully typed.</p>
+
+<h2>Playback</h2>
+<table>
+  <tr><th>Event</th><th>Payload</th></tr>
+  <tr><td><code>ready</code></td><td>—</td></tr>
+  <tr><td><code>play</code>, <code>pause</code>, <code>ended</code></td><td>—</td></tr>
+  <tr><td><code>playing</code>, <code>waiting</code>, <code>canplay</code></td><td>—</td></tr>
+  <tr><td><code>seeking</code>, <code>seeked</code></td><td>—</td></tr>
+  <tr><td><code>timeupdate</code></td><td><code>{ currentTime, duration }</code></td></tr>
+  <tr><td><code>progress</code></td><td><code>{ buffered }</code></td></tr>
+  <tr><td><code>loadedmetadata</code></td><td><code>{ duration }</code></td></tr>
+  <tr><td><code>volumechange</code></td><td><code>{ volume, muted }</code></td></tr>
+  <tr><td><code>ratechange</code></td><td><code>{ rate }</code></td></tr>
+  <tr><td><code>destroy</code></td><td>—</td></tr>
+</table>
+
+<h2>Tracks &amp; quality</h2>
+<table>
+  <tr><th>Event</th><th>Payload</th></tr>
+  <tr><td><code>qualitieschange</code></td><td><code>{ levels }</code></td></tr>
+  <tr><td><code>qualitychange</code></td><td><code>{ level, auto }</code></td></tr>
+  <tr><td><code>audiotrackschange</code></td><td><code>{ tracks }</code></td></tr>
+  <tr><td><code>audiotrackchange</code></td><td><code>{ track }</code></td></tr>
+  <tr><td><code>texttrackchange</code></td><td><code>{ track }</code></td></tr>
+  <tr><td><code>embeddedtexttrack</code></td><td><code>{ track }</code> — found inside the media file</td></tr>
+</table>
+
+<h2>Chapters &amp; playlist</h2>
+<table>
+  <tr><th>Event</th><th>Payload</th></tr>
+  <tr><td><code>chapterschange</code></td><td><code>{ chapters }</code></td></tr>
+  <tr><td><code>chapterchange</code></td><td><code>{ chapter }</code> — playhead crossed a boundary</td></tr>
+  <tr><td><code>playlistchange</code></td><td><code>{ items }</code></td></tr>
+  <tr><td><code>playlistitemchange</code></td><td><code>{ item, index }</code></td></tr>
+</table>
+
+<h2>Presentation</h2>
+<table>
+  <tr><th>Event</th><th>Payload</th></tr>
+  <tr><td><code>enterfullscreen</code>, <code>exitfullscreen</code></td><td>—</td></tr>
+  <tr><td><code>enterpip</code>, <code>leavepip</code></td><td>—</td></tr>
+  <tr><td><code>castavailabilitychange</code></td><td><code>{ available }</code></td></tr>
+</table>
+
+<h2>Errors</h2>
+<pre><code>player.on("error", ({ code, message, fatal }) =&gt; {
+  if (!fatal) return;          // non-fatal: recovery in progress
+  showMessage(message);        // always human-readable
+});</code></pre>
+<table>
+  <tr><th>Code</th><th>Meaning</th></tr>
+  <tr><td><code>NETWORK</code></td><td>Transient network failure; retry in progress if non-fatal</td></tr>
+  <tr><td><code>DECODE</code></td><td>Decode failure, or a dropped undecodable track</td></tr>
+  <tr><td><code>SRC_NOT_SUPPORTED</code></td><td>The browser rejected the source</td></tr>
+  <tr><td><code>CONTAINER_UNSUPPORTED</code></td><td>Container can't be played or remuxed — suggest transcoding</td></tr>
+  <tr><td><code>MANIFEST_LOAD</code></td><td>HLS/DASH manifest failed</td></tr>
+  <tr><td><code>UNKNOWN</code></td><td>Anything else</td></tr>
+</table>
+<div class="note">
+A non-fatal error means Lumen is already recovering — reconnecting, or
+falling back to a remuxer. Only <code>fatal: true</code> means playback
+has genuinely stopped.
+</div>
+      </main>
+    </div>
+    <script type="module" src="./nav.js"></script>
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>

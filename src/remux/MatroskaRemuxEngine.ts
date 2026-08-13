@@ -1,6 +1,6 @@
 import type { EventEmitter } from "../core/EventEmitter";
 import type { LumenAudioTrack } from "../types";
-import { MatroskaDemuxer, type MkvBlock, type MkvTrack } from "./matroska/MatroskaDemuxer";
+import { MatroskaDemuxer, type MkvBlock, type MkvCuePoint, type MkvTrack } from "./matroska/MatroskaDemuxer";
 import { buildInitSegment, buildMediaSegment, buildMimeType, type MuxSample, type MuxTrack } from "./mp4/Mp4Muxer";
 import { buildSampleEntry, codecConfigFromMatroska } from "./mp4/sampleEntries";
 import { MseSink } from "./MseSink";
@@ -51,6 +51,10 @@ export class MatroskaRemuxEngine {
   private candidateAudio: MkvTrack[] = [];
   private selectedAudioNumber: number | null = null;
   private sourceUrl = "";
+  private cues: MkvCuePoint[] = [];
+  private seeking = false;
+  private abortController: AbortController | null = null;
+  private boundOnSeeking = () => this.onSeeking();
 
   constructor(video: HTMLVideoElement, emitter: EventEmitter) {
     this.video = video;
@@ -141,18 +145,30 @@ export class MatroskaRemuxEngine {
       };
 
       this.demuxer.onBlock = (block) => this.onBlock(block);
+      this.demuxer.onCues = (cues) => {
+        this.cues = cues;
+      };
+      // Cues normally live at the end of the file; the SeekHead tells us
+      // where, so the index can be fetched on its own instead of by
+      // downloading everything in front of it.
+      this.demuxer.onCuesLocation = (position) => void this.fetchCues(position);
 
-      void this.pump(response).catch(() => finish(false));
+      void this.pump(response, 0).catch(() => finish(false));
     });
 
     return ready;
   }
 
-  private async pump(response: Response): Promise<void> {
+  private async pump(response: Response, fileOffset: number): Promise<void> {
     const reader = response.body!.getReader();
+    const generation = ++this.pumpGeneration;
+    this.demuxer.fileOffset = fileOffset;
+
     try {
       for (;;) {
-        if (this.destroyed) return;
+        // A seek starts a new pump; the old one must stop feeding the
+        // demuxer or the two reads would interleave into nonsense.
+        if (this.destroyed || generation !== this.pumpGeneration) return;
         const { done, value } = await reader.read();
         if (done) break;
         if (value) this.demuxer.append(value);
@@ -163,7 +179,99 @@ export class MatroskaRemuxEngine {
       // demuxed playable, so finish cleanly rather than tearing down.
       this.demuxer.flush();
     }
-    this.finishStream();
+    if (generation === this.pumpGeneration) this.finishStream();
+  }
+
+  private pumpGeneration = 0;
+
+  /**
+   * Fetches just the Cues element, using the position from the SeekHead.
+   * A few kB of index buys random access to a file that might be gigabytes.
+   */
+  private async fetchCues(position: number): Promise<void> {
+    try {
+      const response = await fetch(this.sourceUrl, { headers: { Range: `bytes=${position}-` } });
+      // A server that ignores Range replies 200 with the whole file, which
+      // would defeat the purpose; only a real partial response is useful.
+      if (response.status !== 206) return;
+
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const indexDemuxer = new MatroskaDemuxer();
+      indexDemuxer.fileOffset = position;
+      indexDemuxer.onCues = (cues) => {
+        this.cues = cues;
+        this.enableSeeking();
+      };
+      indexDemuxer.append(bytes);
+      indexDemuxer.flush();
+    } catch {
+      // No index means seeking stays limited to buffered ranges, which is
+      // a degradation rather than a failure.
+    }
+  }
+
+  private enableSeeking(): void {
+    if (this.seekEnabled || this.cues.length === 0) return;
+    this.seekEnabled = true;
+    this.video.addEventListener("seeking", this.boundOnSeeking);
+  }
+
+  private seekEnabled = false;
+
+  /**
+   * Restarts the pipeline from the cluster covering the seek target.
+   *
+   * Only unbuffered seeks need this: if the target is already in the
+   * SourceBuffer the browser handles it with no work from us.
+   */
+  private onSeeking(): void {
+    if (this.destroyed || this.seeking || this.cues.length === 0) return;
+
+    const target = this.video.currentTime;
+    if (isBuffered(this.video, target)) return;
+
+    const cue = cueForTime(this.cues, target * this.ticksPerSecond());
+    if (!cue) return;
+
+    this.seeking = true;
+    void this.restartFrom(this.demuxer.segmentStart + cue.clusterPosition).finally(() => {
+      this.seeking = false;
+    });
+  }
+
+  private ticksPerSecond(): number {
+    return 1_000_000_000 / (this.demuxer.timestampScale || 1_000_000);
+  }
+
+  /** Re-reads the file from a byte offset, reusing the existing SourceBuffer. */
+  private async restartFrom(position: number): Promise<void> {
+    this.abortController?.abort();
+    const controller = new AbortController();
+    this.abortController = controller;
+
+    let response: Response;
+    try {
+      response = await fetch(this.sourceUrl, {
+        headers: { Range: `bytes=${position}-` },
+        signal: controller.signal,
+      });
+    } catch {
+      return;
+    }
+    if (response.status !== 206 || !response.body || this.destroyed) return;
+
+    // The demuxer restarts mid-file, so it needs the track definitions it
+    // already parsed but not another init segment — the SourceBuffer keeps
+    // the one it has, and fMP4 fragments carry absolute timestamps.
+    const previous = this.demuxer;
+    this.demuxer = new MatroskaDemuxer();
+    this.demuxer.onBlock = (block) => this.onBlock(block);
+    this.demuxer.onError = previous.onError;
+    this.demuxer.seedTimestampScale(previous.timestampScale);
+
+    for (const track of this.tracks.values()) track.queue = [];
+
+    await this.pump(response, position);
   }
 
   private async onTracks(sourceTracks: MkvTrack[], timestampScaleNs: number): Promise<boolean> {
@@ -445,12 +553,33 @@ export class MatroskaRemuxEngine {
 
   destroy(): void {
     this.destroyed = true;
+    this.abortController?.abort();
+    this.video.removeEventListener("seeking", this.boundOnSeeking);
     this.demuxer.onBlock = undefined;
     this.demuxer.onTracks = undefined;
     this.demuxer.onError = undefined;
     this.sink?.destroy();
     this.sink = null;
   }
+}
+
+/** True when a time already sits inside a buffered range. */
+function isBuffered(video: HTMLVideoElement, time: number): boolean {
+  const buffered = video.buffered;
+  for (let i = 0; i < buffered.length; i++) {
+    if (time >= buffered.start(i) && time <= buffered.end(i)) return true;
+  }
+  return false;
+}
+
+/** The last cue at or before a target time — where decoding must restart. */
+function cueForTime(cues: MkvCuePoint[], ticks: number): MkvCuePoint | null {
+  let match: MkvCuePoint | null = null;
+  for (const cue of cues) {
+    if (cue.time <= ticks) match = cue;
+    else break;
+  }
+  return match ?? cues[0] ?? null;
 }
 
 /** Extracts displayable text from a subtitle block, handling SRT-style and ASS/SSA payloads. */

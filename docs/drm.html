@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DRM — Lumen</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar"></aside>
+      <main>
+<h1>DRM</h1>
+<p class="lede">One configuration covers Widevine, PlayReady and FairPlay,
+and is translated for whichever pipeline ends up playing the stream.</p>
+
+<pre><code>player.drm = {
+  widevine:  { licenseUrl: "https://license.example/wv" },
+  playready: { licenseUrl: "https://license.example/pr" },
+  fairplay:  {
+    licenseUrl: "https://license.example/fps",
+    certificateUrl: "https://license.example/fps-cert",
+  },
+};
+
+await player.load("https://example.com/protected.m3u8");</code></pre>
+
+<div class="note">
+Name every key system you support. Only one is available on any given
+platform — FairPlay on Apple devices, Widevine on Chrome and Firefox,
+PlayReady on Edge — and Lumen picks whichever the browser actually offers.
+</div>
+
+<h2>Authenticated licenses</h2>
+<pre><code>player.drm = {
+  widevine: {
+    licenseUrl: "https://license.example/wv",
+    headers: { Authorization: `Bearer ${token}` },
+  },
+};</code></pre>
+
+<h2>Custom license handling</h2>
+<p>Some license servers wrap the response, or expect a transformed
+request. <code>transformLicense</code> runs before the response reaches
+the CDM:</p>
+<pre><code>player.drm = {
+  widevine: {
+    licenseUrl: "https://license.example/wv",
+    transformLicense: async (response) =&gt; {
+      const { license } = JSON.parse(new TextDecoder().decode(response));
+      return Uint8Array.from(atob(license), (c) =&gt; c.charCodeAt(0)).buffer;
+    },
+  },
+};</code></pre>
+
+<h2>How it applies</h2>
+<table>
+  <tr><th>Pipeline</th><th>Mechanism</th></tr>
+  <tr><td>hls.js</td><td>Passed as its <code>drmSystems</code> option</td></tr>
+  <tr><td>dash.js</td><td>Passed via <code>setProtectionData()</code></td></tr>
+  <tr><td>Native playback</td><td>Lumen drives EME itself on the <code>encrypted</code> event</td></tr>
+</table>
+
+<h2>Failures</h2>
+<p>A device that can't unlock the stream gets a plain-language message
+rather than an EME exception:</p>
+<pre><code>player.on("error", ({ message }) =&gt; show(message));
+// "This video is protected and couldn't be unlocked on this device."</code></pre>
+      </main>
+    </div>
+    <script type="module" src="./nav.js"></script>
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>

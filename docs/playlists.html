@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Playlists — Lumen</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar"></aside>
+      <main>
+<h1>Playlists</h1>
+<p class="lede">A playlist advances automatically, and each entry carries
+its own poster, subtitles, thumbnails and chapters.</p>
+
+<pre><code>player.playlist = [
+  {
+    src: "episode-1.mkv",
+    title: "Episode 1",
+    poster: "ep1.jpg",
+    chapters: "ep1-chapters.vtt",
+    tracks: [{ src: "ep1-en.vtt", label: "English", srclang: "en" }],
+  },
+  { src: "episode-2.mp4", title: "Episode 2" },
+];</code></pre>
+
+<h2>Navigation</h2>
+<pre><code>player.next();
+player.previous();
+player.playItem(2);
+player.playlistIndex;    // -1 before anything is loaded</code></pre>
+<p>Next/previous buttons appear in the control bar only when a playlist has
+more than one entry, and disable at each end.</p>
+
+<h2>Events</h2>
+<pre><code>player.on("playlistchange", ({ items }) =&gt; renderQueue(items));
+player.on("playlistitemchange", ({ item, index }) =&gt; highlight(index));</code></pre>
+
+<div class="note">
+Setting a playlist loads its first entry but does <strong>not</strong>
+start playback — that would be an autoplay the viewer never asked for.
+Subsequent items play automatically, because by then the viewer has
+already chosen to watch.
+</div>
+
+<h2>Mixed formats</h2>
+<p>Entries can be any supported format; each is routed independently, so a
+queue can freely mix MKV, MP4 and HLS.</p>
+      </main>
+    </div>
+    <script type="module" src="./nav.js"></script>
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>

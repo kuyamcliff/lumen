@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Installation — Lumen</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar"></aside>
+      <main>
+<h1>Installation</h1>
+<p class="lede">Lumen is a custom element. Importing it registers
+<code>&lt;lumen-player&gt;</code>; there is nothing else to initialize.</p>
+
+<h2>npm</h2>
+<pre><code>npm install @lumen/player</code></pre>
+<pre><code>import "@lumen/player";</code></pre>
+
+<h2>CDN / script tag</h2>
+<pre><code>&lt;script type="module" src="https://unpkg.com/@lumen/player"&gt;&lt;/script&gt;
+&lt;lumen-player src="video.mp4"&gt;&lt;/lumen-player&gt;</code></pre>
+
+<h2>Optional dependencies</h2>
+<p>The core has no required dependencies. These are loaded lazily, only
+when a page actually plays something that needs them:</p>
+<table>
+  <tr><th>Package</th><th>Needed for</th></tr>
+  <tr><td><code>hls.js</code></td><td>HLS on non-Safari browsers, and raw MPEG-TS</td></tr>
+  <tr><td><code>dashjs</code></td><td>MPEG-DASH</td></tr>
+  <tr><td><code>mp4box</code></td><td>Recovering truncated or corrupt MP4s</td></tr>
+</table>
+<pre><code>npm install hls.js        # only if you serve HLS
+npm install dashjs        # only if you serve DASH
+npm install mp4box        # only if you need damaged-file recovery</code></pre>
+
+<div class="note">
+<strong>Script-tag pages:</strong> bundler users get these automatically
+through a dynamic <code>import()</code>. Plain HTML pages should load
+<code>hls.js</code> via its own script tag — Lumen picks up
+<code>window.Hls</code>. For <code>mp4box</code>, assign
+<code>window.MP4Box</code>, since it ships no UMD global build.
+</div>
+
+<h2>Subpath exports</h2>
+<table>
+  <tr><th>Import</th><th>Contents</th></tr>
+  <tr><td><code>@lumen/player</code></td><td>The player and its types</td></tr>
+  <tr><td><code>@lumen/player/react</code></td><td>React component</td></tr>
+  <tr><td><code>@lumen/player/vue</code></td><td>Vue component</td></tr>
+  <tr><td><code>@lumen/player/svelte</code></td><td>Svelte action</td></tr>
+  <tr><td><code>@lumen/player/plugins/ads</code></td><td>VAST ads plugin</td></tr>
+  <tr><td><code>@lumen/player/plugins/ambient</code></td><td>Ambient glow mode</td></tr>
+  <tr><td><code>@lumen/player/offline</code></td><td>Cache API helpers for PWAs</td></tr>
+</table>
+
+<h2>Browser support</h2>
+<p>The last two versions of Chrome, Firefox, Safari and Edge. Remuxed
+formats (MKV, FLV, MPEG-TS) require Media Source Extensions, which all
+of those have.</p>
+      </main>
+    </div>
+    <script type="module" src="./nav.js"></script>
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Offline & PWA — Lumen</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar"></aside>
+      <main>
+<h1>Offline &amp; PWA</h1>
+<p class="lede">Offline playback is mostly a caching problem. These helpers
+handle the parts that are easy to get wrong — chiefly byte-range requests,
+without which seeking breaks.</p>
+
+<pre><code>import { downloadForOffline, isAvailableOffline, removeOffline } from "@lumen/player/offline";
+
+await downloadForOffline("movie.mp4", ({ fraction }) =&gt; {
+  progressBar.value = fraction ?? 0;
+});
+
+await isAvailableOffline("movie.mp4");   // true
+await removeOffline("movie.mp4");</code></pre>
+
+<h2>The service worker</h2>
+<p>A cached response alone isn't enough: media elements seek with
+<code>Range</code> requests and need a <code>206</code> with
+<code>Content-Range</code> back. A plain <code>cache.match()</code> returns
+the whole file with a <code>200</code>, and seeking silently breaks.</p>
+<p>Lumen ships the worker source that answers ranges correctly:</p>
+<pre><code>import { OFFLINE_SERVICE_WORKER } from "@lumen/player/offline";
+
+// Write this to a real file at build time, then:
+navigator.serviceWorker.register("/lumen-sw.js");</code></pre>
+
+<h2>Quota</h2>
+<p><code>downloadForOffline</code> resolves <code>false</code> rather than
+throwing when caching is unavailable or the quota is exceeded, so an app
+can offer "save offline" without wrapping every call. Check the budget
+first if you want to warn ahead of time:</p>
+<pre><code>const { quota, usage } = await navigator.storage.estimate();</code></pre>
+
+<h2>Listing</h2>
+<pre><code>import { listOffline } from "@lumen/player/offline";
+const urls = await listOffline();</code></pre>
+      </main>
+    </div>
+    <script type="module" src="./nav.js"></script>
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>

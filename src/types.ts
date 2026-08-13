@@ -2,7 +2,17 @@
  * Public types for the Lumen player.
  */
 
-export type LumenSourceType = "hls" | "mp4" | "mov" | "mkv" | "webm" | "ogg" | "ts" | "auto";
+export type LumenSourceType =
+  | "hls"
+  | "dash"
+  | "mp4"
+  | "mov"
+  | "mkv"
+  | "webm"
+  | "ogg"
+  | "ts"
+  | "flv"
+  | "auto";
 
 export interface LumenSource {
   src: string;

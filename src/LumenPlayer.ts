@@ -7,6 +7,8 @@ import { ControlsController } from "./ui/ControlsController";
 import { ChapterManager } from "./media/ChapterManager";
 import { CastController } from "./media/CastController";
 import { Translator, type LumenStrings } from "./i18n";
+import { DrmController, type LumenDrmConfig } from "./core/DrmController";
+import type { LumenPlugin } from "./plugins/types";
 import type {
   LumenAudioTrack,
   LumenChapter,
@@ -61,6 +63,18 @@ export class LumenPlayer extends HTMLElement {
   private translator = new Translator();
   private items: LumenPlaylistItem[] = [];
   private itemIndex = -1;
+  private drmController: DrmController | null = null;
+  private drmConfig: LumenDrmConfig = {};
+  private plugins: LumenPlugin[] = [];
+  private pluginTeardowns: Array<() => void> = [];
+
+  /** Plugins applied to every player instance created afterwards. */
+  private static globalPlugins: LumenPlugin[] = [];
+
+  /** Registers a plugin for all future players. */
+  static use(plugin: LumenPlugin): void {
+    LumenPlayer.globalPlugins.push(plugin);
+  }
 
   constructor() {
     super();
@@ -95,7 +109,9 @@ export class LumenPlayer extends HTMLElement {
     this.video.muted = this.hasAttribute("muted");
     this.video.autoplay = this.hasAttribute("autoplay");
 
-    this.engine = new PlaybackEngine(this.video, this.emitter);
+    this.engine = new PlaybackEngine(this.video, this.emitter, {
+      drm: () => this.drmController,
+    });
     const captionsOverlay = this.root.querySelector(".lumen-captions") as HTMLElement;
     this.subtitles = new SubtitleManager(this.video, captionsOverlay, this.emitter);
     this.chapterManager = new ChapterManager(this.video, this.emitter);
@@ -140,6 +156,10 @@ export class LumenPlayer extends HTMLElement {
     this.ingestLightDomTracks();
     this.chapterManager.adoptExisting();
     this.ingestLightDomSources();
+
+    for (const plugin of [...LumenPlayer.globalPlugins, ...this.plugins]) {
+      this.applyPlugin(plugin);
+    }
 
     this.emitter.emit("ready", undefined);
   }
@@ -370,6 +390,47 @@ export class LumenPlayer extends HTMLElement {
     this.controls?.retranslate();
   }
 
+  // --------------------------------------------------------------- plugins
+
+  /**
+   * Registers a plugin on this player. Safe to call before or after the
+   * element is connected — plugins registered early run at mount.
+   */
+  use(plugin: LumenPlugin): this {
+    this.plugins.push(plugin);
+    if (this.connected) this.applyPlugin(plugin);
+    return this;
+  }
+
+  private applyPlugin(plugin: LumenPlugin): void {
+    try {
+      const teardown = plugin.setup(this);
+      if (typeof teardown === "function") this.pluginTeardowns.push(teardown);
+    } catch {
+      // A broken plugin must not take the player down with it.
+      this.controls?.announce(`Plugin "${plugin.name}" failed to start`);
+    }
+  }
+
+  // ------------------------------------------------------------------ drm
+
+  /**
+   * DRM configuration. Applies to the next `load()`, and is passed to
+   * whichever pipeline plays the stream (native EME, hls.js, or dash.js).
+   */
+  get drm(): LumenDrmConfig {
+    return this.drmConfig;
+  }
+
+  set drm(config: LumenDrmConfig) {
+    this.drmConfig = config;
+    this.drmController?.destroy();
+    this.drmController = new DrmController(this.video, config, (message) =>
+      this.emitter.emit("error", { code: "DECODE", message, fatal: true }),
+    );
+    this.drmController.attach();
+  }
+
   // ----------------------------------------------------------------- cast
 
   /** True when a cast receiver (AirPlay or Remote Playback) is reachable. */
@@ -463,6 +524,17 @@ export class LumenPlayer extends HTMLElement {
 
   destroy(): void {
     this.emitter.emit("destroy", undefined);
+    for (const teardown of this.pluginTeardowns) {
+      try {
+        teardown();
+      } catch {
+        /* a plugin failing to clean up shouldn't block the rest */
+      }
+    }
+    this.pluginTeardowns = [];
+    this.drmController?.destroy();
+    this.castController?.destroy();
+    this.chapterManager?.destroy();
     this.controls?.destroy();
     this.subtitles?.destroy();
     this.engine?.destroy();

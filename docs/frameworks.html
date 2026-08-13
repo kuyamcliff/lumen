@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>React, Vue, Svelte — Lumen</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar"></aside>
+      <main>
+<h1>React, Vue &amp; Svelte</h1>
+<p class="lede">Lumen is a Web Component, so it already works in every
+framework. These wrappers add the parts that framework integration
+genuinely needs: object props and event binding.</p>
+
+<h2>React</h2>
+<pre><code>import { Lumen } from "@lumen/player/react";
+
+function Player() {
+  const ref = useRef(null);
+
+  return (
+    &lt;Lumen
+      ref={ref}
+      src="movie.mkv"
+      theme="dark"
+      chapters="chapters.vtt"
+      tracks={[{ src: "en.vtt", label: "English", srclang: "en" }]}
+      onTimeUpdate={({ currentTime }) =&gt; setProgress(currentTime)}
+      onError={(error) =&gt; console.error(error.message)}
+    /&gt;
+  );
+}</code></pre>
+<p>The ref exposes <code>play()</code>, <code>pause()</code>,
+<code>seek()</code>, <code>currentTime</code>, <code>duration</code> and
+<code>qualityLevels</code>, plus <code>player</code> for the full API.</p>
+<div class="note">
+React sets everything as an attribute, so object props like
+<code>playlist</code> would never arrive, and it has no way to bind
+non-DOM events. The wrapper assigns properties and subscribes
+imperatively — which is what makes it feel like ordinary React.
+</div>
+
+<h2>Vue</h2>
+<pre><code>&lt;script setup&gt;
+import { Lumen } from "@lumen/player/vue";
+&lt;/script&gt;
+
+&lt;template&gt;
+  &lt;Lumen
+    src="movie.mkv"
+    theme="dark"
+    :playlist="queue"
+    @timeupdate="onProgress"
+    @error="onError"
+  /&gt;
+&lt;/template&gt;</code></pre>
+
+<h2>Svelte</h2>
+<p>Svelte renders custom elements natively, so the idiomatic integration
+is an action rather than a wrapper component:</p>
+<pre><code>&lt;script&gt;
+  import { lumen } from "@lumen/player/svelte";
+&lt;/script&gt;
+
+&lt;lumen-player
+  use:lumen={{
+    src: "movie.mkv",
+    on: { ready: (p) =&gt; (player = p) },
+  }}
+/&gt;</code></pre>
+
+<h2>Without a wrapper</h2>
+<p>All three are optional. The element works directly:</p>
+<pre><code>&lt;lumen-player src="movie.mkv"&gt;&lt;/lumen-player&gt;</code></pre>
+      </main>
+    </div>
+    <script type="module" src="./nav.js"></script>
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>

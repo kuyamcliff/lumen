@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Plugins — Lumen</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar"></aside>
+      <main>
+<h1>Plugins</h1>
+<p class="lede">A plugin extends the player without being part of it, using
+the same public surface an application would.</p>
+
+<pre><code>import type { LumenPlugin } from "@lumen/player";
+
+const watchTime: LumenPlugin = {
+  name: "watch-time",
+  setup(player) {
+    let seconds = 0;
+    const off = player.on("timeupdate", () =&gt; { seconds += 0.25; });
+
+    // Returning a teardown is optional; it runs on destroy().
+    return () =&gt; {
+      off();
+      report(seconds);
+    };
+  },
+};
+
+player.use(watchTime);              // this player
+LumenPlayer.use(watchTime);         // every player created afterwards</code></pre>
+
+<h2>Bundled plugins</h2>
+<h3>Ads</h3>
+<pre><code>import { ads } from "@lumen/player/plugins/ads";
+player.use(ads({ tagUrl: "https://ads.example/vast.xml" }));</code></pre>
+<p><a href="ads.html">Full ads documentation →</a></p>
+
+<h3>Ambient mode</h3>
+<pre><code>import { ambient } from "@lumen/player/plugins/ambient";
+player.use(ambient({ spread: 80, intensity: 0.7 }));</code></pre>
+<p>Casts a soft glow behind the player, sampled from the video. The frame
+is drawn to a 16×9 offscreen canvas and blurred back up, which is cheap
+enough to run continuously. It disables itself under
+<code>prefers-reduced-motion</code>, and stops if a cross-origin video
+without CORS taints the canvas.</p>
+
+<h2>Design notes</h2>
+<ul>
+  <li><strong>Plugins only use the public API.</strong> They can't come to depend on internals that are free to change.</li>
+  <li><strong>A failing plugin can't take the player down.</strong> <code>setup()</code> is called inside a try/catch; a throw is reported and playback continues.</li>
+  <li><strong>Teardown is optional but encouraged.</strong> Anything a plugin subscribes to or appends should be undone in the returned function.</li>
+</ul>
+      </main>
+    </div>
+    <script type="module" src="./nav.js"></script>
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>

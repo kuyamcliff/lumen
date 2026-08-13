@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Translation — Lumen</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar"></aside>
+      <main>
+<h1>Translation</h1>
+<p class="lede">Every control label, menu entry, screen-reader announcement
+and error message resolves through one string table.</p>
+
+<pre><code>player.setTranslations({
+  play: "Lecture",
+  pause: "Pause",
+  settings: "Réglages",
+  quality: "Qualité",
+  captions: "Sous-titres",
+  fullscreen: "Plein écran",
+});</code></pre>
+
+<div class="note">
+Any key you leave out keeps its English default, so a partial translation
+degrades to mixed language rather than blank buttons.
+</div>
+
+<h2>Full key list</h2>
+<p>The authoritative list is the <code>LumenStrings</code> interface. Keys
+fall into four groups:</p>
+<ul>
+  <li><strong>Controls</strong> — <code>play</code>, <code>pause</code>, <code>mute</code>, <code>unmute</code>, <code>volume</code>, <code>seek</code>, <code>fullscreen</code>, <code>exitFullscreen</code>, <code>pictureInPicture</code>, <code>cast</code>, <code>next</code>, <code>previous</code>, <code>settings</code>, <code>captions</code></li>
+  <li><strong>Menus</strong> — <code>speed</code>, <code>normalSpeed</code>, <code>quality</code>, <code>audio</code>, <code>chapters</code>, <code>appearance</code>, <code>auto</code>, <code>off</code>, <code>back</code></li>
+  <li><strong>Caption styling</strong> — <code>subtitleSize</code>, <code>subtitleBackground</code>, <code>subtitleEdge</code>, <code>subtitlePosition</code>, <code>small</code>, <code>medium</code>, <code>large</code>, <code>solid</code>, <code>dropShadow</code>, <code>outline</code>, <code>none</code>, <code>bottom</code>, <code>top</code></li>
+  <li><strong>Announcements</strong> — templates with a <code>{value}</code> placeholder, e.g. <code>qualityAnnouncement: "Quality: {value}"</code></li>
+</ul>
+
+<pre><code>import { DEFAULT_STRINGS } from "@lumen/player";
+console.log(Object.keys(DEFAULT_STRINGS));  // every key</code></pre>
+
+<h2>Right-to-left</h2>
+<p>Set <code>dir="rtl"</code> on the element or any ancestor; the control
+bar follows the document's writing direction.</p>
+      </main>
+    </div>
+    <script type="module" src="./nav.js"></script>
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>
