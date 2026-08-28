@@ -82,6 +82,8 @@ export class VideoFilters {
   private gammaFilter: SVGFEComponentTransferElement | null = null;
   private state: VideoFilterState;
   private onChange: () => void;
+  /** Watches the player box, but only while a quarter turn depends on it. */
+  private resizeObserver: ResizeObserver | null = null;
 
   /**
    * @param video the media element the filters are painted onto
@@ -250,6 +252,31 @@ export class VideoFilters {
     }
 
     if (!approximately(s.gamma, 1)) this.applyGamma(s.gamma);
+    this.watchSize(s.rotation === 90 || s.rotation === 270);
+  }
+
+  /**
+   * Keeps a quarter-turned picture fitted as the player box changes size.
+   *
+   * The scale factor for a rotation depends on the box's aspect ratio, so
+   * it has to be recomputed when that changes — entering fullscreen being
+   * the case that matters. The observer only exists while a rotation is
+   * actually applied, so an unrotated player costs nothing.
+   */
+  private watchSize(needed: boolean): void {
+    if (needed === (this.resizeObserver !== null)) return;
+
+    if (!needed) {
+      this.resizeObserver?.disconnect();
+      this.resizeObserver = null;
+      return;
+    }
+
+    if (typeof ResizeObserver === "undefined") return;
+    this.resizeObserver = new ResizeObserver(() => {
+      this.video.style.transform = this.cssTransform();
+    });
+    this.resizeObserver.observe(this.video);
   }
 
   /**
@@ -296,6 +323,8 @@ export class VideoFilters {
   }
 
   destroy(): void {
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
     this.video.style.filter = "";
     this.video.style.transform = "";
     this.video.style.objectFit = "";

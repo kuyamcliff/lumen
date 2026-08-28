@@ -463,6 +463,28 @@ try {
       return { angle, transform };
     });
     check("rotation applied", rotated.angle === 90 && rotated.transform !== "none", rotated.transform);
+
+    // The scale a quarter turn needs depends on the box's aspect ratio, so
+    // it has to survive a resize — entering fullscreen being the case that
+    // matters.
+    const resized = await page.evaluate(async () => {
+      const player = document.getElementById("player");
+      const before = getComputedStyle(player.videoElement).transform;
+      // A square box needs no shrink at all for a quarter turn, where a
+      // 16:9 one needs 9/16 — a decisive difference if the observer fires.
+      player.setVideoFilters({ aspectRatio: "1/1" });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const after = getComputedStyle(player.videoElement).transform;
+      player.filters.reset();
+      return { before, after };
+    });
+    // 16:9 needs 0.5625; a square box needs 1.
+    check(
+      "a rotated picture re-fits when the player box changes shape",
+      resized.before.includes("0.56") && resized.after.includes("1, 0"),
+      `${resized.before} → ${resized.after}`,
+    );
+
     await page.evaluate(() => document.getElementById("player").filters.reset());
 
     // --- A-B loop ---

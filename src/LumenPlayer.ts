@@ -93,6 +93,8 @@ export class LumenPlayer extends HTMLElement {
   /** Object URLs created for local files, revoked when they're replaced. */
   private objectUrls: string[] = [];
   private lastSavedPosition = 0;
+  /** Removers for the listeners `bindPlaybackMemory` installs. */
+  private memoryTeardowns: Array<() => void> = [];
 
   /** Plugins applied to every player instance created afterwards. */
   private static globalPlugins: LumenPlugin[] = [];
@@ -191,9 +193,17 @@ export class LumenPlayer extends HTMLElement {
    * happens at the end of an item, and remembering where the viewer got to.
    */
   private bindPlaybackMemory(): void {
-    this.video.addEventListener("ended", () => this.onEnded());
+    const on = <K extends keyof HTMLMediaElementEventMap>(
+      type: K,
+      listener: (event: HTMLMediaElementEventMap[K]) => void,
+    ) => {
+      this.video.addEventListener(type, listener);
+      this.memoryTeardowns.push(() => this.video.removeEventListener(type, listener));
+    };
 
-    this.video.addEventListener("timeupdate", () => {
+    on("ended", () => this.onEnded());
+
+    on("timeupdate", () => {
       const time = this.video.currentTime;
       // Written at most every five seconds: this runs four times a second
       // and localStorage is synchronous.
@@ -202,11 +212,11 @@ export class LumenPlayer extends HTMLElement {
       this.positions.save(time, this.video.duration);
     });
 
-    this.video.addEventListener("pause", () => {
+    on("pause", () => {
       this.positions.save(this.video.currentTime, this.video.duration);
     });
 
-    this.video.addEventListener("loadedmetadata", () => {
+    on("loadedmetadata", () => {
       this.probe?.reset();
       this.videoFilters.refresh();
       this.controls.refreshTimeline();
@@ -1062,6 +1072,8 @@ export class LumenPlayer extends HTMLElement {
     this.controls?.destroy();
     this.subtitles?.destroy();
     this.engine?.destroy();
+    for (const teardown of this.memoryTeardowns) teardown();
+    this.memoryTeardowns = [];
     this.loopController?.destroy();
     this.audioController?.destroy();
     this.videoFilters?.destroy();
