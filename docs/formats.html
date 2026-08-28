@@ -41,6 +41,16 @@ Codecs are a hard limit — no player can decode what the browser can't
 without shipping a multi-megabyte WASM decoder, which would cost more
 than the rest of the player combined.</p>
 
+<h3>Duration while streaming</h3>
+<p>A <code>MediaSource</code> reports no duration until something sets
+one, so a remuxed file used to show <code>0:00 / 0:00</code> until the
+whole thing had downloaded. Lumen reads the length out of the container's
+header — Matroska's <code>Segment</code> info, or the AVI stream
+header — and publishes it immediately, so the scrub bar works from the
+first second. End-of-stream then corrects it to what the file actually
+held, which matters for a truncated upload whose header still describes
+the original.</p>
+
 <h3>How codec failures degrade</h3>
 <table>
   <tr><th>Source</th><th>Result</th></tr>

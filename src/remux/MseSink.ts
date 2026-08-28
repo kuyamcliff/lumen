@@ -58,12 +58,48 @@ export class MseSink {
             resolve(false);
             return;
           }
+          this.applyDuration();
           this.pump();
           resolve(true);
         },
         { once: true },
       );
     });
+  }
+
+  /**
+   * Publishes the stream's total length, so the scrub bar is usable from
+   * the first second rather than only once the file has finished
+   * downloading.
+   *
+   * A MediaSource's duration is NaN until something sets it, and
+   * `endOfStream()` only fixes it at the very end — which for a two-hour
+   * file means two hours of a player that can't say where it is or be
+   * seeked. Every container Lumen remuxes states its length in its header,
+   * so that is used the moment it is known.
+   */
+  setDuration(seconds: number): void {
+    if (!Number.isFinite(seconds) || seconds <= 0) return;
+    this.pendingDuration = seconds;
+    this.applyDuration();
+  }
+
+  private pendingDuration: number | null = null;
+
+  private applyDuration(): void {
+    const mediaSource = this.mediaSource;
+    const seconds = this.pendingDuration;
+    if (!mediaSource || seconds === null || mediaSource.readyState !== "open") return;
+    // Shortening a MediaSource below what is already buffered throws, and
+    // an over-long header is more common than an under-long one.
+    if (this.sourceBuffer?.updating) return;
+    try {
+      mediaSource.duration = seconds;
+      this.pendingDuration = null;
+    } catch {
+      // A header that disagrees with the media isn't worth failing over.
+      this.pendingDuration = null;
+    }
   }
 
   /** Queues a segment. Safe to call before the SourceBuffer exists — it drains once open. */
@@ -82,6 +118,7 @@ export class MseSink {
   private pump(): void {
     const sourceBuffer = this.sourceBuffer;
     if (this.destroyed || !sourceBuffer || sourceBuffer.updating) return;
+    if (this.pendingDuration !== null) this.applyDuration();
 
     const next = this.queue.shift();
     if (next) {

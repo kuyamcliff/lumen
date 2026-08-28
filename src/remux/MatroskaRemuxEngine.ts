@@ -364,6 +364,10 @@ export class MatroskaRemuxEngine {
     sink.append(buildInitSegment(selected.map((t) => t.mux)));
     for (const track of selected) this.tracks.set(track.source.number, track);
 
+    // The file's own stated length, so the scrub bar works from the start
+    // rather than only once the whole file has been read.
+    sink.setDuration(this.demuxer.durationSeconds);
+
     const opened = await sink.open(mime, "segments");
     if (!opened || this.destroyed) return false;
 

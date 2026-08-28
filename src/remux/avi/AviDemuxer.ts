@@ -35,6 +35,8 @@ export interface AviStreamInfo {
   channels?: number;
   sampleRate?: number;
   bitsPerSample?: number;
+  /** Number of samples the header claims, used to derive a duration. */
+  length: number;
   /** Codec-private bytes following the format structure. */
   extradata?: Uint8Array;
 }
@@ -116,6 +118,17 @@ export class AviDemuxer {
 
   get streamInfo(): AviStreamInfo[] {
     return this.streams;
+  }
+
+  /**
+   * The file's own stated length in seconds, or 0 when the header doesn't
+   * say. Taken from the video stream's sample count and timebase, which is
+   * the field muxers fill in most reliably.
+   */
+  get durationSeconds(): number {
+    const video = this.streams.find((stream) => stream.kind === "video") ?? this.streams[0];
+    if (!video || !video.length || !video.rate) return 0;
+    return (video.length * video.scale) / video.rate;
   }
 
   private fail(message: string): void {
@@ -231,7 +244,9 @@ export class AviDemuxer {
 
   /** Reads one stream's `strh` (timing/type) and `strf` (format) chunks. */
   private parseStreamList(strl: Uint8Array): AviStreamInfo | null {
-    let header: { kind: AviStreamKind; handler: string; scale: number; rate: number; sampleSize: number } | null = null;
+    let header:
+      | { kind: AviStreamKind; handler: string; scale: number; rate: number; sampleSize: number; length: number }
+      | null = null;
     let format: Uint8Array | null = null;
 
     let offset = 0;
@@ -248,6 +263,7 @@ export class AviDemuxer {
           handler: fourcc(body, 4),
           scale: u32le(body, 20) || 1,
           rate: u32le(body, 24) || 1,
+          length: u32le(body, 32),
           sampleSize: u32le(body, 44),
         };
       } else if (id === "strf") {
@@ -272,6 +288,7 @@ export class AviDemuxer {
         handler: fourcc(format, 16).trim() || header.handler,
         scale: header.scale,
         rate: header.rate,
+        length: header.length,
         sampleSize: header.sampleSize,
         width: u32le(format, 4),
         // A negative height means a bottom-up bitmap; the magnitude is
@@ -292,6 +309,7 @@ export class AviDemuxer {
         handler: header.handler,
         scale: header.scale,
         rate: header.rate,
+        length: header.length,
         sampleSize: header.sampleSize,
         formatTag: u16le(format, 0),
         channels: u16le(format, 2),
@@ -301,7 +319,15 @@ export class AviDemuxer {
       };
     }
 
-    return { index, kind: header.kind, handler: header.handler, scale: header.scale, rate: header.rate, sampleSize: header.sampleSize };
+    return {
+      index,
+      kind: header.kind,
+      handler: header.handler,
+      scale: header.scale,
+      rate: header.rate,
+      length: header.length,
+      sampleSize: header.sampleSize,
+    };
   }
 
   private emitStreams(): void {

@@ -206,6 +206,7 @@ export class AviRemuxEngine {
     const opened = await sink.open(mime, "segments");
     if (!opened || this.destroyed) return false;
 
+    sink.setDuration(this.demuxer.durationSeconds);
     this.started = true;
     if (this.droppedCodecs.length > 0) this.warnDroppedAudio();
     return true;
@@ -500,7 +501,9 @@ function describeVideoCodec(handler: string): string {
   if (upper === "HFYU" || upper === "FFVH") return "HuffYUV";
   if (upper === "MPEG" || upper === "MPG2") return "MPEG-2";
   if (upper === "WMV3" || upper === "WVC1") return "Windows Media Video";
-  if (upper === "" || upper === "    ") return "uncompressed";
+  // A blank fourcc means the stream declares no codec at all, which in
+  // practice is uncompressed video.
+  if (upper === "") return "uncompressed";
   return `${handler}-coded`;
 }
 

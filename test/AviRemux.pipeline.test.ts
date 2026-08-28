@@ -51,6 +51,7 @@ class FakeMediaSource extends EventTarget {
     return FakeMediaSource.supported;
   }
   readyState: "closed" | "open" | "ended" = "closed";
+  duration = NaN;
   sourceBuffers: FakeSourceBuffer[] = [];
   addSourceBuffer(): FakeSourceBuffer {
     const sb = new FakeSourceBuffer();
@@ -106,7 +107,9 @@ function sampleAvi(options: { extradataInHeader?: boolean } = {}): Uint8Array {
       avih(640, 360, 2),
       list(
         "strl",
-        strh({ type: "vids", handler: "H264", scale: 1, rate: 25 }),
+        // `length` is the sample count the header claims, which is where
+        // the duration comes from before the file has been read.
+        strh({ type: "vids", handler: "H264", scale: 1, rate: 25, length: videoChunks.length }),
         videoFormat(640, 360, "H264", extradata),
       ),
       list("strl", strh({ type: "auds", handler: "    ", scale: 1, rate: 38 }), audioFormat(0x0055, 2, 44100)),
@@ -138,7 +141,14 @@ async function runEngine(avi: Uint8Array): Promise<{
   await new Promise((resolve) => setTimeout(resolve, 50));
 
   const appended = lastMediaSource?.sourceBuffers[0]?.appended ?? [];
-  return { ok, appended, errors, mimes: [...FakeMediaSource.requestedTypes], engine };
+  return {
+    ok,
+    appended,
+    errors,
+    mimes: [...FakeMediaSource.requestedTypes],
+    engine,
+    duration: lastMediaSource?.duration ?? NaN,
+  };
 }
 
 function fourccAt(bytes: Uint8Array, offset: number): string {
@@ -206,6 +216,13 @@ describe("AVI → fragmented MP4 pipeline", () => {
     expect(info.videoTracks[0].codec).toBe("avc1.42001e");
     expect(info.videoTracks[0].video).toMatchObject({ width: 640, height: 360 });
     expect(info.audioTracks[0].audio).toMatchObject({ sample_rate: 44100 });
+    engine.destroy();
+  });
+
+  it("publishes the header's duration, so the scrub bar works before the download finishes", async () => {
+    const { duration, engine } = await runEngine(sampleAvi());
+    // Five frames at 25 fps.
+    expect(duration).toBeCloseTo(0.2, 3);
     engine.destroy();
   });
 
@@ -363,6 +380,10 @@ describe("the checked-in AVI fixture", () => {
     expect(info.isFragmented).toBe(true);
     expect(info.videoTracks[0].video).toMatchObject({ width: 960, height: 540 });
     expect(info.audioTracks[0].audio).toMatchObject({ sample_rate: 48000, channel_count: 2 });
+
+    // 120 frames at 29.97 fps, from the AVI header rather than from having
+    // read the whole file.
+    expect(lastMediaSource?.duration).toBeCloseTo(4.004, 2);
 
     // Four seconds of 29.97 fps video, at the 90 kHz mux timescale.
     const videoFragments = appended.slice(1).filter((segment) => trackIdOf(segment) === 1);

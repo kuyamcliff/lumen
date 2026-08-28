@@ -128,10 +128,42 @@ try {
     const page = await browser.newPage();
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
+    // Throttled, so "the duration is known before the file has arrived" is
+    // actually observable — a 1.5 MB fixture off localhost otherwise
+    // finishes downloading before the first check can run.
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Network.enable");
+    await cdp.send("Network.emulateNetworkConditions", {
+      offline: false,
+      latency: 20,
+      downloadThroughput: 400 * 1024,
+      uploadThroughput: 400 * 1024,
+    });
+
     await page.goto(`${BASE}/formats.html`, { waitUntil: "domcontentloaded", timeout: 20000 });
-    await page.waitForTimeout(800);
+
+    // Read the duration while the file is still arriving: if it is already
+    // known, it came from the Segment header rather than from endOfStream.
+    const earlyDuration = await page.evaluate(async () => {
+      const video = document.getElementById("mkv").videoElement;
+      for (let i = 0; i < 40; i++) {
+        if (Number.isFinite(video.duration) && video.duration > 0) {
+          return { duration: video.duration, buffered: video.buffered.length ? video.buffered.end(0) : 0 };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      return { duration: video.duration, buffered: 0 };
+    });
+
+    await cdp.send("Network.emulateNetworkConditions", {
+      offline: false,
+      latency: 0,
+      downloadThroughput: -1,
+      uploadThroughput: -1,
+    });
+
     await page.evaluate(() => document.getElementById("mkv").play().catch(() => {}));
-    await page.waitForTimeout(3500);
+    await page.waitForTimeout(4000);
 
     const state = await page.evaluate(() => {
       const video = document.getElementById("mkv").videoElement;
@@ -140,10 +172,28 @@ try {
         width: video.videoWidth,
         frames: video.getVideoPlaybackQuality?.().totalVideoFrames ?? 0,
         time: video.currentTime,
+        duration: video.duration,
+        // What the fixture's Segment Info declares, and what it actually holds.
+        headerDuration: 634.57,
+        contentDuration: 16.27,
       };
     });
 
     check("routed through MediaSource, not native", state.blob);
+    // The fixture is an excerpt of a 10:34 source whose Segment header was
+    // never rewritten, which makes it a good test of both halves: the
+    // header's number is published immediately, and end-of-stream corrects
+    // it to what the file actually contains.
+    check(
+      "duration is known from the header before the media arrives",
+      Math.abs(earlyDuration.duration - state.headerDuration) < 1 && earlyDuration.buffered < 1,
+      `${earlyDuration.duration?.toFixed(2)}s known with ${earlyDuration.buffered.toFixed(2)}s buffered`,
+    );
+    check(
+      "end of stream corrects the duration to what the file holds",
+      Math.abs(state.duration - state.contentDuration) < 0.5,
+      `${state.duration?.toFixed(2)}s`,
+    );
     check("video track decodes", state.width > 0 && state.frames > 0, `${state.width}px, ${state.frames} frames`);
     check("playhead advances", state.time > 0.5, `t=${state.time.toFixed(2)}`);
     check("no uncaught errors", errors.length === 0, errors.join("; "));

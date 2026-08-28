@@ -103,6 +103,15 @@ is demuxed and rewritten as fragmented MP4 for Media Source Extensions,
 with the compressed frames copied across untouched. It's fast, lossless,
 and streams while downloading.
 
+A remuxed stream also publishes its length as soon as the header states it,
+rather than at the end of the download. A `MediaSource` reports no duration
+until something sets one, which for a two-hour file used to mean two hours
+of a scrub bar that couldn't say where it was or be dragged. Lumen reads
+the length out of the Matroska `Segment` info or the AVI stream header and
+sets it immediately; end-of-stream then corrects it to whatever the file
+actually turned out to hold, which matters for a truncated upload whose
+header still describes the original.
+
 Codecs are the hard limit. Lumen can't decode what the browser can't, so it
 asks (`MediaSource.isTypeSupported`) before committing and degrades in
 useful steps:
