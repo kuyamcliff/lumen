@@ -1,11 +1,23 @@
 /*
  * Lumen default theme.
  *
- * Every token below reads its own custom property first via var(--x, …)
- * so a page can override any of them from outside the shadow root, e.g.
+ * Every visual value is a custom property, so a page can override any of
+ * them from outside the shadow root:
  *   lumen-player { --lumen-color-accent: #4f46e5; }
- * without needing to touch this file. Dark is the default; `theme="light"`
- * (or "system", which follows prefers-color-scheme) swaps the palette.
+ * That works because a rule matching the host from the outer document
+ * wins over the shadow tree's own `:host` rule — no `!important`, and no
+ * need to touch this file.
+ *
+ * The tokens are plain declarations rather than `--x: var(--x, …)`. That
+ * self-referencing shape reads like "use an override if there is one", but
+ * CSS treats a custom property that depends on itself as a cycle: the
+ * property becomes invalid at computed-value time, and every `var(--x)`
+ * reading it silently falls back to `unset` — which is how the whole
+ * palette can look almost right on a dark page and disappear on a light
+ * one.
+ *
+ * Dark is the default; `theme="light"` (or "system", which follows
+ * prefers-color-scheme) swaps the palette.
  */
 
 :host {
@@ -15,34 +27,34 @@
   contain: layout style;
   width: 100%;
   aspect-ratio: var(--lumen-aspect-ratio, 16 / 9);
-  border-radius: var(--lumen-radius, var(--lumen-radius-lg, 12px));
+  border-radius: var(--lumen-radius, var(--lumen-radius-lg));
   overflow: hidden;
   background: var(--lumen-color-video-bg, #000);
-  font-family: var(--lumen-font-family, var(--lumen-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif));
+  font-family: var(--lumen-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif);
 
   /* ---- dark theme (default) ---- */
-  --lumen-radius-sm: var(--lumen-radius-sm, 6px);
-  --lumen-radius-md: var(--lumen-radius-md, 10px);
-  --lumen-radius-lg: var(--lumen-radius-lg, 14px);
-  --lumen-space-1: var(--lumen-space-1, 4px);
-  --lumen-space-2: var(--lumen-space-2, 8px);
-  --lumen-space-3: var(--lumen-space-3, 12px);
-  --lumen-space-4: var(--lumen-space-4, 16px);
-  --lumen-color-video-bg: var(--lumen-color-video-bg, #000);
-  --lumen-color-surface: var(--lumen-color-surface, rgba(18, 18, 21, 0.78));
-  --lumen-color-surface-strong: var(--lumen-color-surface-strong, rgba(12, 12, 15, 0.94));
-  --lumen-color-text: var(--lumen-color-text, #f5f5f7);
-  --lumen-color-text-muted: var(--lumen-color-text-muted, rgba(245, 245, 247, 0.7));
-  --lumen-color-border: var(--lumen-color-border, rgba(255, 255, 255, 0.14));
-  --lumen-color-accent: var(--lumen-color-accent, #eab54c);
-  --lumen-color-accent-contrast: var(--lumen-color-accent-contrast, #1a1204);
-  --lumen-color-track: var(--lumen-color-track, rgba(255, 255, 255, 0.26));
-  --lumen-color-buffered: var(--lumen-color-buffered, rgba(255, 255, 255, 0.42));
-  --lumen-color-danger: var(--lumen-color-danger, #ff7a7a);
-  --lumen-shadow-controls: var(--lumen-shadow-controls, 0 8px 30px rgba(0, 0, 0, 0.35));
-  --lumen-focus-ring: var(--lumen-focus-ring, 0 0 0 3px rgba(234, 181, 76, 0.55));
-  --lumen-transition-fast: var(--lumen-transition-fast, 120ms ease);
-  --lumen-transition-medium: var(--lumen-transition-medium, 220ms ease);
+  --lumen-radius-sm: 6px;
+  --lumen-radius-md: 10px;
+  --lumen-radius-lg: 14px;
+  --lumen-space-1: 4px;
+  --lumen-space-2: 8px;
+  --lumen-space-3: 12px;
+  --lumen-space-4: 16px;
+  --lumen-color-video-bg: #000;
+  --lumen-color-surface: rgba(18, 18, 21, 0.78);
+  --lumen-color-surface-strong: rgba(12, 12, 15, 0.94);
+  --lumen-color-text: #f5f5f7;
+  --lumen-color-text-muted: rgba(245, 245, 247, 0.7);
+  --lumen-color-border: rgba(255, 255, 255, 0.14);
+  --lumen-color-accent: #eab54c;
+  --lumen-color-accent-contrast: #1a1204;
+  --lumen-color-track: rgba(255, 255, 255, 0.26);
+  --lumen-color-buffered: rgba(255, 255, 255, 0.42);
+  --lumen-color-danger: #ff7a7a;
+  --lumen-shadow-controls: 0 8px 30px rgba(0, 0, 0, 0.35);
+  --lumen-focus-ring: 0 0 0 3px rgba(234, 181, 76, 0.55);
+  --lumen-transition-fast: 120ms ease;
+  --lumen-transition-medium: 220ms ease;
   color: var(--lumen-color-text);
 }
 
@@ -54,29 +66,29 @@
 }
 
 :host([data-theme="light"]) {
-  --lumen-color-surface: var(--lumen-color-surface, rgba(255, 255, 255, 0.82));
-  --lumen-color-surface-strong: var(--lumen-color-surface-strong, rgba(255, 255, 255, 0.96));
-  --lumen-color-text: var(--lumen-color-text, #16161a);
-  --lumen-color-text-muted: var(--lumen-color-text-muted, rgba(22, 22, 26, 0.68));
-  --lumen-color-border: var(--lumen-color-border, rgba(0, 0, 0, 0.12));
-  --lumen-color-accent: var(--lumen-color-accent, #b8791a);
-  --lumen-color-accent-contrast: var(--lumen-color-accent-contrast, #fffaf0);
-  --lumen-color-track: var(--lumen-color-track, rgba(0, 0, 0, 0.16));
-  --lumen-color-buffered: var(--lumen-color-buffered, rgba(0, 0, 0, 0.28));
-  --lumen-shadow-controls: var(--lumen-shadow-controls, 0 8px 24px rgba(0, 0, 0, 0.12));
+  --lumen-color-surface: rgba(255, 255, 255, 0.82);
+  --lumen-color-surface-strong: rgba(255, 255, 255, 0.96);
+  --lumen-color-text: #16161a;
+  --lumen-color-text-muted: rgba(22, 22, 26, 0.68);
+  --lumen-color-border: rgba(0, 0, 0, 0.12);
+  --lumen-color-accent: #b8791a;
+  --lumen-color-accent-contrast: #fffaf0;
+  --lumen-color-track: rgba(0, 0, 0, 0.16);
+  --lumen-color-buffered: rgba(0, 0, 0, 0.28);
+  --lumen-shadow-controls: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
 
 @media (prefers-color-scheme: light) {
   :host([data-theme="system"]) {
-    --lumen-color-surface: var(--lumen-color-surface, rgba(255, 255, 255, 0.82));
-    --lumen-color-surface-strong: var(--lumen-color-surface-strong, rgba(255, 255, 255, 0.96));
-    --lumen-color-text: var(--lumen-color-text, #16161a);
-    --lumen-color-text-muted: var(--lumen-color-text-muted, rgba(22, 22, 26, 0.68));
-    --lumen-color-border: var(--lumen-color-border, rgba(0, 0, 0, 0.12));
-    --lumen-color-accent: var(--lumen-color-accent, #b8791a);
-    --lumen-color-accent-contrast: var(--lumen-color-accent-contrast, #fffaf0);
-    --lumen-color-track: var(--lumen-color-track, rgba(0, 0, 0, 0.16));
-    --lumen-color-buffered: var(--lumen-color-buffered, rgba(0, 0, 0, 0.28));
+    --lumen-color-surface: rgba(255, 255, 255, 0.82);
+    --lumen-color-surface-strong: rgba(255, 255, 255, 0.96);
+    --lumen-color-text: #16161a;
+    --lumen-color-text-muted: rgba(22, 22, 26, 0.68);
+    --lumen-color-border: rgba(0, 0, 0, 0.12);
+    --lumen-color-accent: #b8791a;
+    --lumen-color-accent-contrast: #fffaf0;
+    --lumen-color-track: rgba(0, 0, 0, 0.16);
+    --lumen-color-buffered: rgba(0, 0, 0, 0.28);
   }
 }
 
@@ -610,4 +622,87 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
   .lumen-progress-thumb {
     transform: translate(-50%, -50%) scale(1);
   }
+}
+
+/* ---------- A-B loop region + bookmark pins on the progress bar ---------- */
+.lumen-progress-loop {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--lumen-color-accent, #eab54c) 45%, transparent);
+  pointer-events: none;
+}
+.lumen-progress-loop[hidden] {
+  display: none;
+}
+
+.lumen-progress-bookmarks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.lumen-bookmark-mark {
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  border-radius: 2px;
+  transform: translateY(-50%) rotate(45deg);
+  background: var(--lumen-color-text, #fff);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
+
+/* A short-lived pill next to the clock, e.g. the A-B loop indicator. */
+.lumen-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--lumen-color-accent);
+  color: var(--lumen-color-accent-contrast);
+  white-space: nowrap;
+}
+.lumen-badge[hidden] {
+  display: none;
+}
+
+/* ---------- drag-and-drop target ---------- */
+.lumen-drop {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--lumen-space-3);
+  text-align: center;
+  padding: var(--lumen-space-4);
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(4px);
+  border: 2px dashed var(--lumen-color-accent);
+  border-radius: inherit;
+  pointer-events: none;
+}
+.lumen-drop[hidden] {
+  display: none;
+}
+.lumen.is-dragging .lumen-center {
+  opacity: 0;
+}
+.lumen-drop svg {
+  width: 40px;
+  height: 40px;
+  color: var(--lumen-color-accent);
+}
+.lumen-drop p {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--lumen-color-text);
+}
+
+.lumen-file-input {
+  display: none;
 }

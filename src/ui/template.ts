@@ -2,8 +2,9 @@ import { icon } from "./icons";
 
 /**
  * Static shadow-DOM markup. Dynamic bits (menu panel contents, quality
- * lists, caption tracks) are rendered by ControlsController at runtime —
- * this stays a fixed skeleton so it can be cached as a single template.
+ * lists, caption tracks, side-panel bodies) are rendered by
+ * ControlsController at runtime — this stays a fixed skeleton so it can be
+ * cached as a single template.
  */
 export function renderShell(): string {
   return /* html */ `
@@ -27,6 +28,11 @@ export function renderShell(): string {
         <button type="button" data-action="retry">${icon("refresh")} Try again</button>
       </div>
 
+      <div class="lumen-drop" part="drop" data-el="drop" hidden aria-hidden="true">
+        ${icon("folder")}
+        <p data-el="drop-message">Drop a video or subtitle file to play it</p>
+      </div>
+
       <div class="lumen-controls" part="controls">
         <div class="lumen-progress" part="progress" role="slider" tabindex="0"
              aria-label="Seek" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-el="progress">
@@ -37,8 +43,10 @@ export function renderShell(): string {
           </div>
           <div class="lumen-progress-track">
             <div class="lumen-progress-buffered" data-el="buffered"></div>
+            <div class="lumen-progress-loop" data-el="loop-region" hidden></div>
             <div class="lumen-progress-fill" data-el="fill"></div>
             <div class="lumen-progress-chapters" data-el="chapter-marks"></div>
+            <div class="lumen-progress-bookmarks" data-el="bookmark-marks"></div>
             <div class="lumen-progress-thumb"></div>
           </div>
         </div>
@@ -63,6 +71,7 @@ export function renderShell(): string {
               </div>
             </div>
             <span class="lumen-time" data-el="time" aria-hidden="true">0:00 / 0:00</span>
+            <span class="lumen-badge" data-el="loop-badge" hidden>A-B</span>
           </div>
 
           <div class="lumen-spacer"></div>
@@ -70,6 +79,12 @@ export function renderShell(): string {
           <div class="lumen-row-end">
             <button type="button" class="lumen-btn" part="button" data-action="captions-toggle" aria-label="Captions" aria-pressed="false" hidden>
               ${icon("captions")}
+            </button>
+            <button type="button" class="lumen-btn" part="button" data-action="panel-playlist" aria-label="Playlist" aria-pressed="false" hidden>
+              ${icon("list")}
+            </button>
+            <button type="button" class="lumen-btn" part="button" data-action="panel-effects" aria-label="Effects" aria-pressed="false">
+              ${icon("sliders")}
             </button>
             <button type="button" class="lumen-btn" part="button" data-action="cast" aria-label="Cast" hidden>
               ${icon("cast")}
@@ -88,6 +103,19 @@ export function renderShell(): string {
       </div>
 
       <div class="lumen-menu" part="menu" role="menu" data-el="menu" hidden></div>
+
+      <aside class="lumen-panel" part="panel" data-el="panel" hidden aria-label="Panel">
+        <header class="lumen-panel-head">
+          <h2 class="lumen-panel-title" data-el="panel-title"></h2>
+          <button type="button" class="lumen-btn lumen-panel-close" data-action="panel-close" aria-label="Close panel">
+            ${icon("close")}
+          </button>
+        </header>
+        <div class="lumen-panel-body" data-el="panel-body"></div>
+      </aside>
+
+      <input type="file" class="lumen-file-input" data-el="file-input" multiple
+             accept="video/*,audio/*,.mkv,.avi,.flv,.ts,.m2ts,.mov,.srt,.ass,.ssa,.vtt,.sub" hidden />
 
       <span class="lumen-sr-only" role="status" aria-live="polite" data-el="announcer"></span>
     </div>

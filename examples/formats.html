@@ -43,16 +43,28 @@
       ></lumen-player>
       <div class="log" id="mp4-log"></div>
 
+      <h2>AVI (.avi)</h2>
+      <p>
+        The container the web is usually told to give up on. It isn't the
+        container that's the problem — it's what most AVIs carry inside
+        (MPEG-4 ASP, which no browser decodes). This one holds H.264 and
+        AAC, so it plays: demuxed and rewritten as fragmented MP4, frames
+        copied across untouched.
+      </p>
+      <lumen-player id="avi" src="./media/sample-h264.avi"></lumen-player>
+      <div class="log" id="avi-log"></div>
+
       <h2>What happens to a format nobody can decode</h2>
       <p>
-        Containers that genuinely can't be played in a browser (AVI, WMV,
-        FLV) are detected and reported in plain language, rather than
-        failing with a blank player.
+        When a file genuinely can't be played, the reason names the codec
+        rather than blaming the container — an Xvid AVI reports
+        <em>"MPEG-4 ASP (XVID), which no browser can decode"</em>, not
+        "AVI files can't be played".
       </p>
       <pre><code>player.on("error", ({ code, message }) => {
   if (code === "CONTAINER_UNSUPPORTED") {
-    // e.g. "AVI files can't be played in a browser.
-    //       Converting this to MP4 or WebM will fix it."
+    // e.g. "This AVI's video is MPEG-4 ASP (XVID), which no browser
+    //       can decode. Converting it to H.264 MP4 will fix it."
     showTranscodePrompt(message);
   }
 });</code></pre>
@@ -61,7 +73,7 @@
     <script type="module">
       import "/src/index.ts";
 
-      for (const id of ["mkv", "mp4"]) {
+      for (const id of ["mkv", "mp4", "avi"]) {
         const player = document.getElementById(id);
         const log = document.getElementById(`${id}-log`);
         const write = (line) => {

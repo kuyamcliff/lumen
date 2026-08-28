@@ -4,24 +4,22 @@ import type { SubtitleManager } from "../subtitles/SubtitleManager";
 import type { ChapterManager } from "../media/ChapterManager";
 import type { CastController } from "../media/CastController";
 import type { Translator } from "../i18n";
-import type { LumenError } from "../types";
+import type { LumenError, LumenPanel } from "../types";
 import { bufferedEnd, clamp, formatTime } from "../utils/time";
 import { isCoarsePointer } from "../utils/dom";
 import { icon } from "./icons";
 import { ThumbnailTrack } from "./Thumbnails";
+import type { PlayerBridge } from "./PlayerBridge";
+import type { PanelController } from "./panels/index";
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 const IDLE_MS = 2600;
-type MenuView = "root" | "speed" | "quality" | "captions" | "appearance" | "audio" | "chapters";
+/** How often the media-info panel refreshes its live statistics. */
+const STATS_INTERVAL_MS = 1000;
+/** Subtitle and audio delay nudge, matching VLC's 50 ms steps. */
+const DELAY_STEP_MS = 50;
 
-/** Playlist state the controls need, without coupling them to the player. */
-export interface PlaylistBridge {
-  hasPlaylist(): boolean;
-  hasNext(): boolean;
-  hasPrevious(): boolean;
-  next(): void;
-  previous(): void;
-}
+type MenuView = "root" | "speed" | "quality" | "captions" | "appearance" | "audio" | "chapters" | "tools";
 
 export interface ControlsControllerOptions {
   root: HTMLElement;
@@ -33,8 +31,19 @@ export interface ControlsControllerOptions {
   chapters: ChapterManager;
   cast: CastController;
   strings: Translator;
-  playlist: PlaylistBridge;
-  retry: () => void;
+  player: PlayerBridge;
+}
+
+/**
+ * True when a drag carries files rather than, say, selected text.
+ *
+ * Inlined rather than imported from `media/files` so that module — which
+ * is only needed once files actually arrive — stays out of the core
+ * bundle entirely.
+ */
+function dragHasFiles(event: DragEvent): boolean {
+  const types = event.dataTransfer?.types;
+  return types ? Array.from(types).includes("Files") : false;
 }
 
 function $(root: ParentNode, selector: string): HTMLElement {
@@ -54,8 +63,7 @@ export class ControlsController {
   private chapters: ChapterManager;
   private cast: CastController;
   private strings: Translator;
-  private playlist: PlaylistBridge;
-  private retryAction: () => void;
+  private player: PlayerBridge;
 
   private els: {
     poster: HTMLElement;
@@ -73,6 +81,9 @@ export class ControlsController {
     previewTime: HTMLElement;
     previewChapter: HTMLElement;
     chapterMarks: HTMLElement;
+    bookmarkMarks: HTMLElement;
+    loopRegion: HTMLElement;
+    loopBadge: HTMLElement;
     time: HTMLElement;
     volumeInput: HTMLInputElement;
     captions: HTMLElement;
@@ -80,6 +91,14 @@ export class ControlsController {
     nextButton: HTMLElement;
     previousButton: HTMLElement;
     menu: HTMLElement;
+    panel: HTMLElement;
+    panelTitle: HTMLElement;
+    panelBody: HTMLElement;
+    playlistButton: HTMLElement;
+    effectsButton: HTMLElement;
+    drop: HTMLElement;
+    dropMessage: HTMLElement;
+    fileInput: HTMLInputElement;
     announcer: HTMLElement;
   };
 
@@ -89,8 +108,16 @@ export class ControlsController {
   private menuOpen = false;
   private menuView: MenuView = "root";
   private thumbnails: ThumbnailTrack | null = null;
+  private panelView: LumenPanel | null = null;
+  private panelController: PanelController | null = null;
+  private panelLoading: Promise<PanelController | null> | null = null;
+  private statsTimer: number | null = null;
+  private dragDepth = 0;
+  /** Set while waiting to see whether a click is really a double-click. */
+  private clickTimer: number | null = null;
   private boundOutsideClick = this.onOutsideClick.bind(this);
   private boundKeydown = this.onKeydown.bind(this);
+  private boundFullscreenChange = () => this.onFullscreenChange();
 
   constructor(opts: ControlsControllerOptions) {
     this.root = opts.root;
@@ -102,8 +129,7 @@ export class ControlsController {
     this.chapters = opts.chapters;
     this.cast = opts.cast;
     this.strings = opts.strings;
-    this.playlist = opts.playlist;
-    this.retryAction = opts.retry;
+    this.player = opts.player;
 
     this.els = {
       poster: $(this.root, ".lumen-poster"),
@@ -121,6 +147,9 @@ export class ControlsController {
       previewTime: $(this.root, '[data-el="preview-time"]'),
       previewChapter: $(this.root, '[data-el="preview-chapter"]'),
       chapterMarks: $(this.root, '[data-el="chapter-marks"]'),
+      bookmarkMarks: $(this.root, '[data-el="bookmark-marks"]'),
+      loopRegion: $(this.root, '[data-el="loop-region"]'),
+      loopBadge: $(this.root, '[data-el="loop-badge"]'),
       time: $(this.root, '[data-el="time"]'),
       volumeInput: $(this.root, '[data-el="volume"]') as HTMLInputElement,
       captions: $(this.root, '[data-action="captions-toggle"]'),
@@ -128,6 +157,14 @@ export class ControlsController {
       nextButton: $(this.root, '[data-action="next"]'),
       previousButton: $(this.root, '[data-action="previous"]'),
       menu: $(this.root, '[data-el="menu"]'),
+      panel: $(this.root, '[data-el="panel"]'),
+      panelTitle: $(this.root, '[data-el="panel-title"]'),
+      panelBody: $(this.root, '[data-el="panel-body"]'),
+      playlistButton: $(this.root, '[data-action="panel-playlist"]'),
+      effectsButton: $(this.root, '[data-action="panel-effects"]'),
+      drop: $(this.root, '[data-el="drop"]'),
+      dropMessage: $(this.root, '[data-el="drop-message"]'),
+      fileInput: $(this.root, '[data-el="file-input"]') as HTMLInputElement,
       announcer: $(this.root, '[data-el="announcer"]'),
     };
 
@@ -140,13 +177,16 @@ export class ControlsController {
     this.bindEngineEvents();
     this.bindSubtitleEvents();
     this.bindChapterEvents();
+    this.bindFiles();
+    this.bindLoopEvents();
+    this.bindMenu();
     this.updatePipSupport();
     this.updateFullscreenIcon();
     this.applyStaticLabels();
     this.refreshPlaylistButtons();
 
     document.addEventListener("click", this.boundOutsideClick, true);
-    document.addEventListener("fullscreenchange", () => this.onFullscreenChange());
+    document.addEventListener("fullscreenchange", this.boundFullscreenChange);
   }
 
   /** Applies translated labels to controls whose text never changes at runtime. */
@@ -163,6 +203,11 @@ export class ControlsController {
     label('[data-action="cast"]', "cast");
     label('[data-action="next"]', "next");
     label('[data-action="previous"]', "previous");
+    label('[data-action="panel-playlist"]', "playlist");
+    label('[data-action="panel-effects"]', "effects");
+    label('[data-action="panel-close"]', "closePanel");
+    this.els.dropMessage.textContent = this.strings.t("dropToPlay");
+    this.els.loopBadge.textContent = this.strings.t("abLoop");
 
     const retry = this.root.querySelector('[data-action="retry"]');
     if (retry) retry.innerHTML = `${icon("refresh")} ${this.strings.t("tryAgain")}`;
@@ -170,11 +215,13 @@ export class ControlsController {
 
   /** Shows the next/previous buttons only when a playlist actually offers somewhere to go. */
   refreshPlaylistButtons(): void {
-    const hasPlaylist = this.playlist.hasPlaylist();
+    const hasPlaylist = this.player.hasPlaylist();
     this.els.nextButton.hidden = !hasPlaylist;
     this.els.previousButton.hidden = !hasPlaylist;
-    this.els.nextButton.toggleAttribute("disabled", !this.playlist.hasNext());
-    this.els.previousButton.toggleAttribute("disabled", !this.playlist.hasPrevious());
+    this.els.playlistButton.hidden = !hasPlaylist;
+    this.els.nextButton.toggleAttribute("disabled", !this.player.hasNext());
+    this.els.previousButton.toggleAttribute("disabled", !this.player.hasPrevious());
+    if (this.panelView === "playlist") void this.renderPanel();
   }
 
   private activeChapterStart: number | null = null;
@@ -327,10 +374,22 @@ export class ControlsController {
           });
           break;
         case "next":
-          this.playlist.next();
+          this.player.next();
           break;
         case "previous":
-          this.playlist.previous();
+          this.player.previous();
+          break;
+        case "panel-playlist":
+          void this.togglePanel("playlist");
+          break;
+        case "panel-effects":
+          void this.togglePanel("effects");
+          break;
+        case "panel-close":
+          this.closePanel();
+          break;
+        case "open-file":
+          this.els.fileInput.click();
           break;
         case "fullscreen":
           this.toggleFullscreen();
@@ -340,7 +399,7 @@ export class ControlsController {
           break;
         case "retry":
           this.hideError();
-          this.retryAction();
+          this.player.retry();
           break;
         default:
           break;
@@ -349,13 +408,26 @@ export class ControlsController {
 
     // Clicking/tapping the video surface itself toggles play (desktop only —
     // on touch it should just reveal controls, handled by bindIdle).
+    //
+    // The toggle is deferred by one double-click interval: without that, a
+    // double-click to go fullscreen also pauses and resumes the video,
+    // which is visible as a stutter at exactly the wrong moment.
     this.video.addEventListener("click", () => {
-      if (!isCoarsePointer()) this.togglePlay();
+      if (isCoarsePointer()) return;
+      if (this.clickTimer !== null) return;
+      this.clickTimer = window.setTimeout(() => {
+        this.clickTimer = null;
+        this.togglePlay();
+      }, 220);
     });
 
     this.root.addEventListener("dblclick", (e) => {
-      if ((e.target as HTMLElement).closest(".lumen-controls, .lumen-menu")) return;
-      this.toggleFullscreen();
+      if (this.clickTimer !== null) {
+        window.clearTimeout(this.clickTimer);
+        this.clickTimer = null;
+      }
+      if ((e.target as HTMLElement).closest(".lumen-controls, .lumen-menu, .lumen-panel")) return;
+      void this.toggleFullscreen();
     });
   }
 
@@ -474,7 +546,7 @@ export class ControlsController {
     const pct = duration ? clamp((currentTime / duration) * 100, 0, 100) : 0;
     this.els.fill.style.width = `${pct}%`;
     this.els.progress.setAttribute("aria-valuenow", String(Math.round(pct)));
-    this.els.progress.setAttribute("aria-valuetext", `${formatTime(currentTime)} of ${formatTime(duration)}`);
+    this.els.progress.setAttribute("aria-valuetext", `${formatTime(currentTime)} / ${formatTime(duration)}`);
     this.els.time.textContent = `${formatTime(currentTime)} / ${formatTime(duration)}`;
   }
 
@@ -526,16 +598,26 @@ export class ControlsController {
     this.els.captions.setAttribute("aria-pressed", String(!!active));
   }
 
+  /** The track to restore when captions are switched back on. */
+  private lastCaptionTrack: TextTrack | null = null;
+
   private toggleCaptionsQuick(): void {
     if (this.subtitles.current) {
+      this.lastCaptionTrack = this.subtitles.current;
       this.subtitles.setActiveTrack(null);
       this.announce(this.strings.t("captionsOff"));
-    } else {
-      const first = this.subtitles.tracks[0];
-      if (first) {
-        this.subtitles.setActiveTrack(first);
-        this.announce(this.strings.t("captionsAnnouncement", first.label || first.language));
-      }
+      return;
+    }
+
+    // Toggling back on should return the track that was on before, not
+    // reset to the first one in the list.
+    const tracks = this.subtitles.tracks;
+    const restore = this.lastCaptionTrack && tracks.includes(this.lastCaptionTrack)
+      ? this.lastCaptionTrack
+      : tracks[0];
+    if (restore) {
+      this.subtitles.setActiveTrack(restore);
+      this.announce(this.strings.t("captionsAnnouncement", restore.label || restore.language));
     }
   }
 
@@ -600,6 +682,227 @@ export class ControlsController {
     this.els.error.hidden = true;
   }
 
+  // -------------------------------------------------------------- panels
+
+  /** Opens a panel, or closes it if it's already the one showing. */
+  async togglePanel(view: LumenPanel): Promise<void> {
+    if (this.panelView === view) {
+      this.closePanel();
+      return;
+    }
+    await this.openPanel(view);
+  }
+
+  async openPanel(view: LumenPanel): Promise<void> {
+    this.closeMenu();
+    this.panelView = view;
+    this.showControls();
+    this.updatePanelButtons();
+    this.emitter.emit("panelchange", { panel: view });
+
+    // Revealed only once the module — and with it the panel stylesheet —
+    // has arrived, so the drawer never flashes up unstyled.
+    await this.renderPanel();
+    if (this.panelView !== view) return;
+    this.els.panel.hidden = false;
+    this.root.classList.add("has-panel");
+
+    // The statistics view is the only one that changes on its own.
+    if (view === "info") this.startStats();
+    else this.stopStats();
+  }
+
+  closePanel(): void {
+    if (this.panelView === null) return;
+    this.panelView = null;
+    this.els.panel.hidden = true;
+    this.root.classList.remove("has-panel");
+    this.panelController?.stop();
+    this.els.panelBody.replaceChildren();
+    this.stopStats();
+    this.updatePanelButtons();
+    this.emitter.emit("panelchange", { panel: null });
+  }
+
+  get openPanelView(): LumenPanel | null {
+    return this.panelView;
+  }
+
+  private updatePanelButtons(): void {
+    this.els.playlistButton.setAttribute("aria-pressed", String(this.panelView === "playlist"));
+    this.els.effectsButton.setAttribute(
+      "aria-pressed",
+      String(this.panelView === "effects" || this.panelView === "equalizer"),
+    );
+  }
+
+  /**
+   * Loads the panel module on first use.
+   *
+   * Panels are a dialog's worth of controls — sliders, an equalizer bank,
+   * a statistics table — and none of it is needed to watch a video, so it
+   * lives in its own chunk behind this dynamic import rather than in the
+   * bundle every page downloads.
+   */
+  private async ensurePanelController(): Promise<PanelController | null> {
+    if (this.panelController) return this.panelController;
+    if (!this.panelLoading) {
+      this.panelLoading = import("./panels/index")
+        .then(({ PanelController }) => {
+          this.panelController = new PanelController(
+            {
+              bridge: this.player,
+              video: this.video,
+              subtitles: this.subtitles,
+              strings: this.strings,
+              announce: (message) => this.announce(message),
+            },
+            this.els.panelBody,
+            this.els.panelTitle,
+          );
+          return this.panelController;
+        })
+        .catch(() => null);
+    }
+    return this.panelLoading;
+  }
+
+  private async renderPanel(): Promise<void> {
+    const view = this.panelView;
+    if (!view) return;
+    const controller = await this.ensurePanelController();
+    // The panel may have been closed while the chunk was in flight.
+    if (!controller || this.panelView !== view) return;
+    controller.render(view);
+  }
+
+  private startStats(): void {
+    this.stopStats();
+    this.statsTimer = window.setInterval(() => this.panelController?.refresh(), STATS_INTERVAL_MS);
+  }
+
+  private stopStats(): void {
+    if (this.statsTimer !== null) {
+      window.clearInterval(this.statsTimer);
+      this.statsTimer = null;
+    }
+  }
+
+  // --------------------------------------------------------------- files
+
+  /**
+   * Local files: a picker, a drop target, and the plumbing between them.
+   *
+   * `dragenter`/`dragleave` fire for every child element the pointer
+   * crosses, so the overlay is driven by a depth counter rather than by
+   * the events alone — otherwise it flickers off the moment the cursor
+   * moves over the controls.
+   */
+  private bindFiles(): void {
+    this.els.fileInput.addEventListener("change", () => {
+      const files = Array.from(this.els.fileInput.files ?? []);
+      if (files.length > 0) void this.player.openFiles(files);
+      // Cleared so choosing the same file twice in a row still fires.
+      this.els.fileInput.value = "";
+    });
+
+    // The panel's "Open file" button can't reach the input directly, so it
+    // asks through an event that bubbles out of the shadow subtree.
+    this.els.panelBody.addEventListener("lumen-open-file", () => this.els.fileInput.click());
+
+    this.root.addEventListener("dragenter", (event) => {
+      if (!dragHasFiles(event)) return;
+      event.preventDefault();
+      this.dragDepth++;
+      this.showDropTarget(true);
+    });
+
+    this.root.addEventListener("dragover", (event) => {
+      if (!dragHasFiles(event)) return;
+      // Without this the browser navigates to the file instead.
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    });
+
+    this.root.addEventListener("dragleave", (event) => {
+      if (!dragHasFiles(event)) return;
+      this.dragDepth = Math.max(0, this.dragDepth - 1);
+      if (this.dragDepth === 0) this.showDropTarget(false);
+    });
+
+    this.root.addEventListener("drop", (event) => {
+      if (!dragHasFiles(event)) return;
+      event.preventDefault();
+      this.dragDepth = 0;
+      this.showDropTarget(false);
+      const files = Array.from(event.dataTransfer?.files ?? []);
+      if (files.length > 0) void this.player.openFiles(files);
+    });
+  }
+
+  /**
+   * Shows or hides the drop target. The big play button is hidden with it,
+   * so the folder prompt doesn't land on top of another control.
+   */
+  private showDropTarget(visible: boolean): void {
+    this.els.drop.hidden = !visible;
+    this.root.classList.toggle("is-dragging", visible);
+  }
+
+  /** Opens the file picker; also reachable from the tools menu and `o`. */
+  promptForFile(): void {
+    this.els.fileInput.click();
+  }
+
+  // ---------------------------------------------------------- A-B loop
+
+  private bindLoopEvents(): void {
+    this.emitter.on("abloopchange", () => this.renderLoopRegion());
+    this.emitter.on("bookmarkschange", () => this.renderBookmarkMarks());
+    this.emitter.on("loadedmetadata", () => {
+      this.renderLoopRegion();
+      this.renderBookmarkMarks();
+    });
+  }
+
+  /** Paints the looped span onto the progress bar. */
+  private renderLoopRegion(): void {
+    const loop = this.player.loop.abLoop;
+    const duration = this.video.duration;
+    this.els.loopBadge.hidden = loop === null;
+
+    if (!loop || !Number.isFinite(duration) || duration <= 0) {
+      this.els.loopRegion.hidden = true;
+      return;
+    }
+
+    const start = clamp((loop.start / duration) * 100, 0, 100);
+    // With only the A point set, the region runs to the end of the bar —
+    // which is exactly what will be looped if B is never marked.
+    const end = loop.end === null ? 100 : clamp((loop.end / duration) * 100, 0, 100);
+    this.els.loopRegion.hidden = false;
+    this.els.loopRegion.style.left = `${start}%`;
+    this.els.loopRegion.style.width = `${Math.max(0, end - start)}%`;
+  }
+
+  /** Draws a pin on the progress bar for every bookmark in this file. */
+  private renderBookmarkMarks(): void {
+    const bookmarks = this.player.getBookmarks();
+    const duration = this.video.duration;
+    this.els.bookmarkMarks.replaceChildren();
+    if (bookmarks.length === 0 || !Number.isFinite(duration) || duration <= 0) return;
+
+    const fragment = document.createDocumentFragment();
+    for (const bookmark of bookmarks) {
+      const mark = document.createElement("div");
+      mark.className = "lumen-bookmark-mark";
+      mark.style.left = `${clamp((bookmark.time / duration) * 100, 0, 100)}%`;
+      mark.title = bookmark.label;
+      fragment.appendChild(mark);
+    }
+    this.els.bookmarkMarks.appendChild(fragment);
+  }
+
   // --------------------------------------------------------------- menu
 
   private toggleMenu(): void {
@@ -629,17 +932,24 @@ export class ControlsController {
     }
   }
 
+  /**
+   * The menu's click handler is installed once, on the container.
+   *
+   * It used to be added per render with `{ once: true }`, which meant any
+   * click that missed an actionable row — the gap between items, a label
+   * inside an appearance row — consumed the listener and left the whole
+   * menu dead until it was reopened.
+   */
+  private bindMenu(): void {
+    this.els.menu.addEventListener("click", (e) => {
+      const item = (e.target as HTMLElement).closest<HTMLElement>("[data-menu-action]");
+      if (item) this.onMenuAction(item);
+    });
+  }
+
   private renderMenu(): void {
     const menu = this.els.menu;
     menu.replaceChildren();
-    menu.addEventListener(
-      "click",
-      (e) => {
-        const item = (e.target as HTMLElement).closest<HTMLElement>("[data-menu-action]");
-        if (item) this.onMenuAction(item);
-      },
-      { once: true },
-    );
 
     if (this.menuView === "root") {
       const rate = this.video.playbackRate;
@@ -675,6 +985,8 @@ export class ControlsController {
           ),
         );
       }
+
+      menu.appendChild(this.menuRow(this.strings.t("effects"), "", "open-tools"));
       return;
     }
 
@@ -725,6 +1037,21 @@ export class ControlsController {
       });
       if (this.subtitles.current) {
         menu.appendChild(this.menuRow(this.strings.t("appearance"), "", "open-appearance"));
+      }
+    } else if (this.menuView === "tools") {
+      const tools: Array<[string, string]> = [
+        [this.strings.t("equalizer"), "panel-equalizer"],
+        [this.strings.t("effects"), "panel-effects"],
+        [this.strings.t("playlist"), "panel-playlist"],
+        [this.strings.t("mediaInformation"), "panel-info"],
+        [this.strings.t("shortcuts"), "panel-shortcuts"],
+        [this.strings.t("snapshot"), "snapshot"],
+        [this.strings.t("abLoop"), "ab-loop"],
+        [this.strings.t("addBookmark"), "add-bookmark"],
+        [this.strings.t("openFile"), "open-file-menu"],
+      ];
+      for (const [label, action] of tools) {
+        menu.appendChild(this.menuRow(label, "", action));
       }
     } else if (this.menuView === "appearance") {
       const t = this.strings;
@@ -838,6 +1165,36 @@ export class ControlsController {
       case "open-chapters":
         this.openMenu("chapters");
         return;
+      case "open-tools":
+        this.openMenu("tools");
+        return;
+      case "panel-equalizer":
+      case "panel-effects":
+      case "panel-playlist":
+      case "panel-info":
+      case "panel-shortcuts": {
+        const view = action.slice("panel-".length) as LumenPanel;
+        this.closeMenu();
+        void this.openPanel(view);
+        return;
+      }
+      case "snapshot":
+        this.closeMenu();
+        void this.player.saveSnapshot();
+        return;
+      case "ab-loop":
+        this.closeMenu();
+        this.cycleAbLoop();
+        return;
+      case "add-bookmark":
+        this.closeMenu();
+        this.player.addBookmark();
+        this.announce(this.strings.t("bookmarkAdded"));
+        return;
+      case "open-file-menu":
+        this.closeMenu();
+        this.promptForFile();
+        return;
       case "set-audio": {
         const id = item.dataset.value ?? "";
         this.engine.setAudioTrack(id);
@@ -897,14 +1254,27 @@ export class ControlsController {
 
   private scheduleIdle(delay = IDLE_MS): void {
     this.showControls();
-    if (this.idleTimer) window.clearTimeout(this.idleTimer);
-    if (this.video.paused || this.menuOpen) return;
+    // Nothing auto-hides while playback is stopped or a surface is open:
+    // there is no video to get out of the way of.
+    if (this.video.paused || this.menuOpen || this.panelView !== null) return;
     this.idleTimer = window.setTimeout(() => {
       this.root.classList.add("is-idle");
     }, delay);
   }
 
+  /**
+   * Reveals the controls and cancels any pending hide.
+   *
+   * Cancelling matters: pausing used to only remove the class, leaving a
+   * timer armed from before the pause to fire a moment later and hide the
+   * controls again — on a paused video, with no way to get them back
+   * except moving the pointer.
+   */
   private showControls(): void {
+    if (this.idleTimer !== null) {
+      window.clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
     this.root.classList.remove("is-idle");
   }
 
@@ -914,10 +1284,30 @@ export class ControlsController {
     this.root.addEventListener("keydown", this.boundKeydown);
   }
 
+  /**
+   * The focused element *inside the shadow tree*.
+   *
+   * `document.activeElement` reports the host element for anything focused
+   * within a shadow root, so comparing it against a control in here never
+   * matches — which is how the "don't hijack the volume slider's arrow
+   * keys" guard below could silently do nothing.
+   */
+  private activeElement(): Element | null {
+    const root = this.root.getRootNode();
+    if (root instanceof ShadowRoot) return root.activeElement;
+    return this.root.ownerDocument.activeElement;
+  }
+
   private onKeydown(e: KeyboardEvent): void {
-    const activeEl = this.root.ownerDocument.activeElement;
+    const activeEl = this.activeElement();
     if (activeEl === this.els.volumeInput) return; // let the native range handle its own arrows
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    // A panel is full of sliders, selects and buttons; single letters there
+    // belong to whatever has focus, not to the player.
+    if (this.panelView !== null && this.els.panel.contains(activeEl as Node)) {
+      if (e.key === "Escape") this.closePanel();
+      return;
+    }
 
     switch (e.key) {
       case " ":
@@ -927,17 +1317,22 @@ export class ControlsController {
         e.preventDefault();
         break;
       case "ArrowRight":
-        if (activeEl !== this.els.progress) this.seekBy(5);
+        if (activeEl !== this.els.progress) {
+          this.seekBy(5);
+          e.preventDefault();
+        }
         break;
       case "ArrowLeft":
-        if (activeEl !== this.els.progress) this.seekBy(-5);
+        if (activeEl !== this.els.progress) {
+          this.seekBy(-5);
+          e.preventDefault();
+        }
         break;
       case "j":
       case "J":
         this.seekBy(-10);
         break;
       case "l":
-      case "L":
         this.seekBy(10);
         break;
       case "ArrowUp":
@@ -959,24 +1354,165 @@ export class ControlsController {
         break;
       case "c":
       case "C":
+      case "v":
+        // VLC cycles subtitle tracks with `v`; `c` is the web convention
+        // for toggling them. Both land on the same control.
         this.toggleCaptionsQuick();
         break;
       case "<":
       case ",":
-        this.video.playbackRate = Math.max(0.25, this.video.playbackRate - 0.25);
+        this.nudgeSpeed(-0.25);
         break;
       case ">":
       case ".":
-        this.video.playbackRate = Math.min(2, this.video.playbackRate + 0.25);
+        this.nudgeSpeed(0.25);
         break;
+
+      // ---- VLC's power-user bindings ----
+      case "e":
+        this.player.stepFrame(1);
+        break;
+      case "E":
+        this.player.stepFrame(-1);
+        break;
+      case "g":
+        this.nudgeSubtitleDelay(-DELAY_STEP_MS);
+        break;
+      case "h":
+        this.nudgeSubtitleDelay(DELAY_STEP_MS);
+        break;
+      case "G":
+        this.nudgeAudioDelay(-DELAY_STEP_MS);
+        break;
+      case "H":
+        this.nudgeAudioDelay(DELAY_STEP_MS);
+        break;
+      case "a":
+        this.announce(
+          this.strings.t("aspectAnnouncement", this.player.filters.cycleAspectRatio() ?? this.strings.t("source")),
+        );
+        break;
+      case "z":
+        this.announce(
+          this.strings.t("zoomAnnouncement", `${Math.round(this.player.filters.cycleZoom() * 100)}%`),
+        );
+        break;
+      case "r":
+        this.announce(this.strings.t("rotationAnnouncement", `${this.player.filters.rotate()}°`));
+        break;
+      case "b":
+        this.cycleAudioTrack();
+        break;
+      case "A":
+        this.cycleAbLoop();
+        break;
+      case "B":
+        this.player.addBookmark();
+        this.announce(this.strings.t("bookmarkAdded"));
+        break;
+      case "s":
+      case "S":
+        void this.player.saveSnapshot();
+        break;
+      case "n":
+        this.player.next();
+        break;
+      case "N":
+        this.player.previous();
+        break;
+      case "R":
+        this.player.setShuffle(!this.player.getShuffle());
+        this.announce(
+          this.strings.t("shuffleAnnouncement", this.strings.t(this.player.getShuffle() ? "on" : "off")),
+        );
+        break;
+      case "L":
+        this.cycleRepeat();
+        break;
+      case "p":
+      case "P":
+        void this.togglePanel("playlist");
+        break;
+      case "x":
+      case "X":
+        void this.togglePanel("effects");
+        break;
+      case "q":
+      case "Q":
+        void this.togglePanel("equalizer");
+        break;
+      case "i":
+      case "I":
+        void this.togglePanel("info");
+        break;
+      case "o":
+      case "O":
+        this.promptForFile();
+        break;
+      case "?":
+        void this.togglePanel("shortcuts");
+        break;
+
       case "Escape":
         if (this.menuOpen) this.closeMenu();
+        else if (this.panelView !== null) this.closePanel();
         break;
       default:
         if (/^[0-9]$/.test(e.key) && Number.isFinite(this.video.duration)) {
           this.video.currentTime = (Number(e.key) / 10) * this.video.duration;
+          e.preventDefault();
         }
     }
+  }
+
+  private nudgeSpeed(delta: number): void {
+    const rate = clamp(this.video.playbackRate + delta, 0.25, 4);
+    this.video.playbackRate = rate;
+    this.announce(this.strings.t("speedAnnouncement", `${rate}×`));
+  }
+
+  private nudgeSubtitleDelay(deltaMs: number): void {
+    const next = Math.round((this.player.getSubtitleOffset() + deltaMs / 1000) * 1000) / 1000;
+    this.player.setSubtitleOffset(next);
+    this.announce(this.strings.t("subtitleDelayAnnouncement", `${Math.round(next * 1000)} ms`));
+  }
+
+  private nudgeAudioDelay(deltaMs: number): void {
+    const audio = this.player.audio;
+    audio.set({ delayMs: audio.effects.delayMs + deltaMs });
+    this.announce(this.strings.t("audioDelayAnnouncement", `${audio.effects.delayMs} ms`));
+  }
+
+  /** VLC's `b`: step to the next audio track, wrapping at the end. */
+  private cycleAudioTrack(): void {
+    const tracks = this.engine.audioTracks;
+    if (tracks.length < 2) return;
+    const current = tracks.findIndex((track) => track.active);
+    const next = tracks[(current + 1) % tracks.length];
+    if (!next) return;
+    this.engine.setAudioTrack(next.id);
+    this.announce(this.strings.t("audioAnnouncement", next.label));
+  }
+
+  /** Advances the A→B loop and announces which step it landed on. */
+  cycleAbLoop(): void {
+    const state = this.player.loop.cycle();
+    const loop = this.player.loop.abLoop;
+    if (state === "a-set") {
+      this.announce(this.strings.t("abLoopStart"));
+    } else if (state === "b-set" && loop?.end != null) {
+      this.announce(this.strings.t("abLoopSet", `${formatTime(loop.start)} – ${formatTime(loop.end)}`));
+    } else {
+      this.announce(this.strings.t("abLoopCleared"));
+    }
+  }
+
+  private cycleRepeat(): void {
+    const order = ["off", "one", "all"] as const;
+    const next = order[(order.indexOf(this.player.getRepeat()) + 1) % order.length] ?? "off";
+    this.player.setRepeat(next);
+    const label = next === "off" ? this.strings.t("off") : this.strings.t(next === "one" ? "repeatOne" : "repeatAll");
+    this.announce(this.strings.t("repeatAnnouncement", label));
   }
 
   // ------------------------------------------------------------- public
@@ -1005,10 +1541,22 @@ export class ControlsController {
     this.updateVolumeUi();
     this.updateFullscreenIcon();
     if (this.menuOpen) this.renderMenu();
+    if (this.panelView !== null) void this.renderPanel();
+  }
+
+  /** Redraws the parts of the bar whose positions depend on the duration. */
+  refreshTimeline(): void {
+    this.renderLoopRegion();
+    this.renderBookmarkMarks();
   }
 
   destroy(): void {
     document.removeEventListener("click", this.boundOutsideClick, true);
+    document.removeEventListener("fullscreenchange", this.boundFullscreenChange);
     if (this.idleTimer) window.clearTimeout(this.idleTimer);
+    if (this.clickTimer) window.clearTimeout(this.clickTimer);
+    this.stopStats();
+    this.panelController?.stop();
+    this.panelController = null;
   }
 }

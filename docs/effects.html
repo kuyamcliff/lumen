@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Equalizer &amp; effects — Lumen</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar"></aside>
+      <main>
+<h1>Equalizer &amp; effects</h1>
+<p class="lede">The controls a desktop player has and a web player usually
+doesn't: a ten-band equalizer, picture adjustments, audio and subtitle
+sync, A→B looping, frame stepping, snapshots and a media information
+panel. All of it is in the player itself — no plugin, no configuration.</p>
+
+<p>Press <kbd>?</kbd> in any player for the keyboard reference, or open
+<a href="../examples/effects.html">the effects example</a> to try
+everything at once.</p>
+
+<h2>Panels</h2>
+<table>
+  <tr><th>Panel</th><th>Opens with</th><th>Contents</th></tr>
+  <tr><td><strong>Equalizer</strong></td><td><kbd>q</kbd></td><td>Ten bands, preamp, eighteen presets, a live spectrum</td></tr>
+  <tr><td><strong>Effects</strong></td><td><kbd>x</kbd></td><td>Audio, Video and Captions tabs</td></tr>
+  <tr><td><strong>Playlist</strong></td><td><kbd>p</kbd></td><td>The queue, repeat, shuffle, bookmarks, open file</td></tr>
+  <tr><td><strong>Media information</strong></td><td><kbd>i</kbd></td><td>Container, pipeline, codecs, resolution, frame rate, bitrate, dropped frames, buffer</td></tr>
+  <tr><td><strong>Shortcuts</strong></td><td><kbd>?</kbd></td><td>Every binding</td></tr>
+</table>
+
+<pre><code>player.openPanel("equalizer");  // or "effects" | "playlist" | "info" | "shortcuts"
+player.openPanel(null);         // close
+player.panel;                   // whichever is open</code></pre>
+
+<div class="note">
+The panels are a separate lazily-loaded chunk, stylesheet included. A page
+that never opens one never downloads any of it.
+</div>
+
+<h2>Equalizer</h2>
+<p>The ten centre frequencies (60, 170, 310, 600, 1000, 3000, 6000, 12000,
+14000 and 16000 Hz) and all eighteen preset curves are the ones VLC ships,
+running through Web Audio biquad filters.</p>
+
+<pre><code>player.setEqualizerPreset("rock");
+
+player.audio.set({
+  preamp: -3,
+  bands: [8, 4.8, -5.6, -8, -3.2, 4, 8.8, 11.2, 11.2, 11.2],
+});
+
+player.audioEffects;   // { equalizer, preamp, bands, preset, boost, delayMs, stereo, normalize }</code></pre>
+
+<p>Preset ids: <code>flat</code>, <code>classical</code>, <code>club</code>,
+<code>dance</code>, <code>fullbass</code>, <code>fullbasstreble</code>,
+<code>fulltreble</code>, <code>headphones</code>, <code>largehall</code>,
+<code>live</code>, <code>party</code>, <code>pop</code>, <code>reggae</code>,
+<code>rock</code>, <code>ska</code>, <code>soft</code>, <code>softrock</code>,
+<code>techno</code>.</p>
+
+<h3>The spectrum</h3>
+<p>Above the faders is a live spectrum, drawn from the analyser node at the
+end of the audio graph. Its bars are spread logarithmically, because
+frequency bins are linear and hearing isn't — a linear layout would spend
+nine tenths of the display on the top two octaves, where there is rarely
+anything to see.</p>
+<p>It draws only once the audio graph exists, which is to say once an
+effect has actually been engaged. Building the graph purely to animate a
+strip would route the element through Web Audio permanently and end
+AirPlay handoff — far too much to spend on decoration. It also respects
+<code>prefers-reduced-motion</code>, where it does not animate at all.</p>
+
+<h3>Two deliberate differences from VLC</h3>
+<p><strong>Preamp is re-based.</strong> VLC stores each preset's preamp on
+the 0–20 scale it inherited from Winamp, where 12 means unity. Applying
+that literally in a browser would add +12&nbsp;dB to a flat curve and clip
+everything, so Lumen subtracts flat's 12 from every preset — the same
+relative relationship, at a level a browser can actually play.</p>
+
+<p><strong>Band width is derived, not fixed.</strong> VLC's frequencies
+aren't evenly spaced: there are three bands crammed between 12 and
+16&nbsp;kHz. A single fixed Q would leave the low bands too narrow and pile
+the top three on top of each other, so each band's Q comes from the
+geometric distance to its neighbours.</p>
+
+<h2>Audio</h2>
+<pre><code>player.audio.set({
+  boost: 1.8,        // 100%–300%, past what video.volume allows
+  delayMs: 200,      // audio plays later, for a track that runs ahead
+  stereo: "mono",    // "stereo" | "mono" | "left" | "right" | "swap"
+  normalize: true,   // dynamic-range compression, VLC's volume normalizer
+});
+player.audio.reset();</code></pre>
+
+<div class="note">
+<strong>Audio effects need same-origin media, or the
+<code>crossorigin</code> attribute.</strong> Web Audio silently zeroes
+cross-origin audio that wasn't fetched with CORS — the graph runs and every
+sample is zero — and the routing can't be undone once created. Lumen checks
+before building anything and leaves the effects unavailable rather than
+muting your video. Read <code>player.audio.isAvailable</code> to know up
+front.
+</div>
+
+<p>The graph is built the first time an effect leaves its default. That
+matters for more than bytes: routing an element through Web Audio is
+permanent for the life of that element, costs an <code>AudioContext</code>,
+and ends AirPlay/Remote Playback handoff. A page that never touches an
+effect pays none of it.</p>
+
+<p>Audio delay only runs in one direction. A <code>DelayNode</code> can
+hold audio back; nothing can hold back a video element's own rendering, so
+"audio earlier than video" has no browser equivalent.</p>
+
+<h2>Picture</h2>
+<pre><code>player.setVideoFilters({
+  brightness: 1.2,     // 0–2
+  contrast: 1.3,       // 0–2
+  saturation: 0.15,    // 0–3
+  hue: 20,             // -180–180 degrees
+  gamma: 1.8,          // 0.1–4
+  zoom: 1.4,
+  rotation: 90,        // 0 | 90 | 180 | 270
+  flipHorizontal: true,
+  fit: "fill",         // "fit" | "fill" | "stretch"
+  aspectRatio: "4/3",  // or null for the source's own
+});
+
+player.filters.rotate();            // a quarter turn, as VLC's `r` does
+player.filters.cycleAspectRatio();  // source → 16/9 → 4/3 → 1/1 → …
+player.filters.cycleZoom();         // 25% → 50% → 100% → 200% → 400%
+player.filters.reset();</code></pre>
+
+<p>All of it is a CSS <code>filter</code> and <code>transform</code> on the
+video element: it costs nothing until a control moves, runs on the GPU, and
+never touches the decoded frames. Gamma is the one adjustment CSS has no
+primitive for, so it goes through a small inline SVG
+<code>feComponentTransfer</code> filter that is only referenced while gamma
+is off its default.</p>
+
+<h2>Looping, stepping, snapshots, bookmarks</h2>
+<pre><code>player.cycleAbLoop();                  // A, then B, then clear
+player.setAbLoop({ start: 12, end: 18 });
+player.abLoop;                         // { start, end } | null
+
+player.stepFrame(1);                   // and -1 to step back
+player.frameRate;                      // measured, null until enough frames have shown
+
+await player.saveSnapshot();           // downloads a PNG of the current frame
+const blob = await player.snapshot({ type: "image/jpeg", quality: 0.9, width: 1280 });
+
+player.addBookmark("The good bit");
+player.bookmarks;                      // [{ time, label }], pinned to the scrub bar
+player.removeBookmark(time);</code></pre>
+
+<p>Snapshots re-apply Lumen's own colour adjustments to the canvas, so the
+saved image matches the picture on screen rather than what the decoder
+produced. Cross-origin media without CORS can't be read back at all — that
+case is reported rather than saving a blank frame.</p>
+
+<h2>Subtitle timing and formats</h2>
+<pre><code>player.subtitleOffset = 0.5;   // seconds; positive shows cues later
+await player.addSubtitleFile(file);</code></pre>
+
+<p>Browsers load exactly one subtitle format: WebVTT. Everything a viewer
+actually has — the <code>.srt</code> that came with the file, an
+<code>.ass</code> from a fansub group, a decade-old <code>.sub</code> — is
+refused by <code>&lt;track&gt;</code> without explanation. Lumen converts
+<strong>SRT, ASS/SSA, SubViewer and MicroDVD</strong> in the browser and
+feeds the result into the same pipeline external WebVTT uses.</p>
+
+<p>Conversion is text-only: ASS positioning, karaoke timing and drawing
+commands are dropped, because WebVTT has no equivalent and a garbled
+override tag on screen is worse than clean text. Italic, bold and underline
+overrides are translated rather than discarded.</p>
+
+<h2>Local files</h2>
+<pre><code>player.openFiles(fileList);   // videos become the queue; subtitles attach
+player.openFile(file);</code></pre>
+
+<p>Drag a video onto the player, or press <kbd>o</kbd>. Dropping a movie
+and its <code>.srt</code> together does the obvious thing. Dropping several
+videos builds a playlist in natural filename order, so a season folder
+queues as episodes 1, 2, … 10 rather than 1, 10, 2.</p>
+
+<p>Everything routes through an object URL, which is same-origin and
+range-capable — exactly what the remuxers and MediaSource want — so a local
+MKV or AVI takes the same path as a remote one, minus the network.</p>
+
+<h2>Media information</h2>
+<pre><code>player.mediaInfo();
+// { container: "Matroska (MKV)", engine: "MKV remux", codecs: "vp09.00.21.08,opus",
+//   width: 640, height: 360, frameRate: 60.02, duration: 16.2, bitrateKbps: null,
+//   droppedFrames: 3, decodedFrames: 334, bufferAheadSeconds: 10.8,
+//   bufferedRanges: [[0, 16.2]], audioTrackCount: 1, textTrackCount: 2,
+//   playbackRate: 1, readyState: 4 }</code></pre>
+
+<p>Frame rate is measured from
+<code>requestVideoFrameCallback</code> — the presentation time of frames
+the compositor actually showed — because a remuxed stream's container may
+carry no frame-rate field at all. Bitrate comes from the ABR engine when
+one is driving playback, and from the browser's decoded-byte counters
+otherwise.</p>
+
+<h2>Resume, repeat and shuffle</h2>
+<pre><code>player.repeat = "all";   // "off" | "one" | "all"
+player.shuffle = true;</code></pre>
+
+<p>Playback position is remembered per file and restored on the next visit,
+keyed on the URL with its query string stripped so an expiring signed CDN
+link still matches the same film. Positions under 30 seconds, or within 20
+seconds of the end, are ignored — it never hijacks a file that barely
+started or already finished. Add <code>resume="off"</code> to the element
+to turn it off.</p>
+
+<h2>Events</h2>
+<pre><code>player.on("audioeffectchange", ({ effects }) =&gt; { /* … */ });
+player.on("videofilterchange", ({ filters }) =&gt; { /* … */ });
+player.on("abloopchange", ({ loop }) =&gt; { /* … */ });
+player.on("bookmarkschange", ({ bookmarks }) =&gt; { /* … */ });
+player.on("snapshot", ({ blob, filename }) =&gt; { /* … */ });
+player.on("panelchange", ({ panel }) =&gt; { /* … */ });
+player.on("resume", ({ position }) =&gt; { /* … */ });
+player.on("repeatchange", ({ mode }) =&gt; { /* … */ });
+player.on("shufflechange", ({ shuffle }) =&gt; { /* … */ });</code></pre>
+      </main>
+    </div>
+    <script type="module" src="./nav.js"></script>
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>

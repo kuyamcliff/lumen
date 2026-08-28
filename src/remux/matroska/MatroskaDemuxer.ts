@@ -65,6 +65,7 @@ export class MatroskaDemuxer {
   private consumed = 0;
   private position = 0;
   private timestampScaleNs = DEFAULT_TIMESTAMP_SCALE_NS;
+  private durationTicks = 0;
   private clusterTimestamp = 0;
   private tracks: MkvTrack[] = [];
   private tracksEmitted = false;
@@ -99,6 +100,12 @@ export class MatroskaDemuxer {
 
   get timestampScale(): number {
     return this.timestampScaleNs;
+  }
+
+  /** The file's own stated length in seconds, or 0 when it declares none. */
+  get durationSeconds(): number {
+    if (!this.durationTicks) return 0;
+    return (this.durationTicks * this.timestampScaleNs) / 1_000_000_000;
   }
 
   /**
@@ -191,6 +198,9 @@ export class MatroskaDemuxer {
     this.forEachChild(start, end, (id, contentStart, length) => {
       if (id === ID.TimestampScale) {
         this.timestampScaleNs = readUint(this.buffer, contentStart, length) || DEFAULT_TIMESTAMP_SCALE_NS;
+      } else if (id === ID.Duration) {
+        // Stored as a float in TimestampScale ticks, not seconds.
+        this.durationTicks = readFloat(this.buffer, contentStart, length);
       }
     });
   }

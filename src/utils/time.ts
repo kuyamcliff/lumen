@@ -30,6 +30,15 @@ export function bufferedAhead(buffered: TimeRanges, currentTime: number): number
   return 0;
 }
 
+/** Every buffered span as `[start, end]` pairs — the statistics view's input. */
+export function timeRanges(buffered: TimeRanges): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  for (let i = 0; i < buffered.length; i++) {
+    ranges.push([buffered.start(i), buffered.end(i)]);
+  }
+  return ranges;
+}
+
 /** Furthest contiguous buffered end time reachable from currentTime, else 0. */
 export function bufferedEnd(buffered: TimeRanges): number {
   return buffered.length > 0 ? buffered.end(buffered.length - 1) : 0;

@@ -25,6 +25,7 @@
   <tr><td><code>object-fit</code></td><td><code>contain</code> | <code>cover</code></td></tr>
   <tr><td><code>thumbnails</code></td><td>WebVTT sprite sheet for scrub previews</td></tr>
   <tr><td><code>chapters</code></td><td>WebVTT chapters file</td></tr>
+  <tr><td><code>resume</code></td><td>Set to <code>off</code> to stop remembering playback positions</td></tr>
 </table>
 
 <h2>Playback</h2>
@@ -66,7 +67,62 @@ player.setChapters(chapters: LumenChapter[]): void</code></pre>
 player.playlistIndex: number
 player.playItem(index: number): Promise&lt;void&gt;
 player.next(): void
-player.previous(): void</code></pre>
+player.previous(): void
+
+player.repeat: "off" | "one" | "all"    // read/write
+player.shuffle: boolean                 // read/write</code></pre>
+
+<h2>Audio effects</h2>
+<pre><code>player.audio: AudioController
+player.audioEffects: AudioEffectState
+player.setAudioEffects(patch: Partial&lt;AudioEffectState&gt;): void
+player.setEqualizerPreset(id: string): boolean
+
+player.audio.isAvailable: boolean   // false for cross-origin media without CORS
+player.audio.isActive: boolean      // true once the Web Audio graph exists
+player.audio.reset(): void
+player.audio.getFrequencyData(target: Uint8Array): boolean</code></pre>
+<p>See <a href="effects.html">Equalizer &amp; effects</a>.</p>
+
+<h2>Picture adjustments</h2>
+<pre><code>player.filters: VideoFilters
+player.videoFilterState: VideoFilterState
+player.setVideoFilters(patch: Partial&lt;VideoFilterState&gt;): void
+
+player.filters.rotate(): 0 | 90 | 180 | 270
+player.filters.cycleAspectRatio(): string | null
+player.filters.cycleZoom(): number
+player.filters.cycleFit(): "fit" | "fill" | "stretch"
+player.filters.reset(): void</code></pre>
+
+<h2>Looping, stepping, snapshots, bookmarks</h2>
+<pre><code>player.abLoop: { start: number; end: number | null } | null
+player.setAbLoop(loop: AbLoop | null): void
+player.cycleAbLoop(): void
+
+player.frameRate: number | null
+player.stepFrame(direction?: number): void
+
+player.snapshot(options?: SnapshotOptions): Promise&lt;Blob&gt;
+player.saveSnapshot(options?: SnapshotOptions): Promise&lt;void&gt;
+
+player.bookmarks: LumenBookmarkEntry[]
+player.addBookmark(label?: string): void
+player.removeBookmark(time: number): void</code></pre>
+
+<h2>Files and subtitle timing</h2>
+<pre><code>player.openFiles(files: File[]): Promise&lt;void&gt;
+player.openFile(file: File): Promise&lt;void&gt;
+player.addSubtitleFile(file: File): Promise&lt;void&gt;   // SRT, ASS/SSA, SubViewer, MicroDVD
+
+player.subtitleOffset: number    // seconds; positive shows cues later</code></pre>
+
+<h2>Panels and diagnostics</h2>
+<pre><code>player.openPanel(panel: LumenPanel | null): void
+player.panel: LumenPanel | null
+
+player.mediaInfo(): LumenMediaInfo
+player.retry(): void</code></pre>
 
 <h2>Presentation</h2>
 <pre><code>player.requestFullscreen(): Promise&lt;void&gt;

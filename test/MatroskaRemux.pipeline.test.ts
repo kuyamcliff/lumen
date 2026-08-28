@@ -41,6 +41,7 @@ class FakeMediaSource extends EventTarget {
     return FakeMediaSource.supported;
   }
   readyState: "closed" | "open" | "ended" = "closed";
+  duration = NaN;
   sourceBuffers: FakeSourceBuffer[] = [];
   addSourceBuffer(): FakeSourceBuffer {
     const sb = new FakeSourceBuffer();
@@ -98,6 +99,8 @@ function sampleMkv(): Uint8Array {
       audioTrackEntry({ number: 2, channels: 2, sampleRate: 48000 }),
     ],
     clusters,
+    // 12.5 seconds at the default 1 ms tick.
+    durationTicks: 12500,
   });
 }
 
@@ -152,6 +155,26 @@ describe("Matroska → fragmented MP4 pipeline", () => {
     // avcC bytes 1-3 are profile/compat/level (High, 0x00, 3.1) and the AAC
     // AudioSpecificConfig decodes to object type 2 (AAC-LC).
     expect(mimes[0]).toBe('video/mp4; codecs="avc1.64001f,mp4a.40.2"');
+  });
+
+  it("publishes the Segment's stated duration before the file finishes", async () => {
+    await runEngine(sampleMkv());
+    // 12500 ticks at the default 1 ms TimestampScale.
+    expect(lastMediaSource?.duration).toBeCloseTo(12.5, 3);
+  });
+
+  it("leaves the duration alone when the file states none", async () => {
+    const noDuration = buildMkv({
+      trackEntries: [videoTrackEntry({ number: 1, width: 640, height: 360 })],
+      clusters: [
+        {
+          timestamp: 0,
+          blocks: [element(MKV_ID.SimpleBlock, simpleBlockPayload({ track: 1, timestamp: 0, frames: [frame(1, 32)] }))],
+        },
+      ],
+    });
+    await runEngine(noDuration);
+    expect(Number.isNaN(lastMediaSource?.duration ?? NaN)).toBe(true);
   });
 
   it("emits an init segment followed by media fragments", async () => {

@@ -119,7 +119,13 @@ export function containerLabel(kind: ContainerKind): string {
   }
 }
 
-/** Containers Lumen can play, either natively or by remuxing. */
+/**
+ * Containers Lumen can play, either natively or by remuxing.
+ *
+ * AVI is included because the container itself is playable; whether a
+ * particular AVI plays comes down to the codecs inside it, which the
+ * remuxer checks and reports on individually.
+ */
 export function isPlayableContainer(kind: ContainerKind): boolean {
   return (
     kind === "iso-bmff" ||
@@ -128,6 +134,7 @@ export function isPlayableContainer(kind: ContainerKind): boolean {
     kind === "ogg" ||
     kind === "mpeg-ts" ||
     kind === "flv" ||
+    kind === "avi" ||
     kind === "unknown" // unknown still gets a native attempt — the browser may know better than us
   );
 }

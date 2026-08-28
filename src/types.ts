@@ -12,6 +12,7 @@ export type LumenSourceType =
   | "ogg"
   | "ts"
   | "flv"
+  | "avi"
   | "auto";
 
 export interface LumenSource {
@@ -82,6 +83,9 @@ export interface LumenError {
 
 export type LumenTheme = "dark" | "light";
 
+/** Which side panel is open, or null when none is. */
+export type LumenPanel = "playlist" | "equalizer" | "effects" | "info" | "shortcuts";
+
 export interface SubtitleStylePrefs {
   fontSize: number; // relative scale, 1 = 100%
   fontFamily?: string;
@@ -102,6 +106,12 @@ export const DEFAULT_SUBTITLE_PREFS: SubtitleStylePrefs = {
   position: "bottom",
   offsetSeconds: 0,
 };
+
+/** A saved position inside the current file. */
+export interface LumenBookmarkEntry {
+  time: number;
+  label: string;
+}
 
 export type LumenEventMap = {
   play: undefined;
@@ -130,6 +140,21 @@ export type LumenEventMap = {
   /** Fired when the playlist advances, manually or automatically. */
   playlistitemchange: { item: LumenPlaylistItem; index: number };
   castavailabilitychange: { available: boolean };
+  /** The A→B loop was set, advanced, or cleared. */
+  abloopchange: { loop: { start: number; end: number | null } | null };
+  /** A picture adjustment (brightness, zoom, rotation, …) changed. */
+  videofilterchange: { filters: import("./video/VideoFilters").VideoFilterState };
+  /** An audio effect (equalizer, boost, delay, …) changed. */
+  audioeffectchange: { effects: import("./audio/AudioController").AudioEffectState };
+  bookmarkschange: { bookmarks: LumenBookmarkEntry[] };
+  /** A frame was captured, with the encoded image and its filename. */
+  snapshot: { blob: Blob; filename: string };
+  repeatchange: { mode: "off" | "one" | "all" };
+  shufflechange: { shuffle: boolean };
+  /** A side panel was opened or closed. */
+  panelchange: { panel: LumenPanel | null };
+  /** Playback resumed at a remembered position. */
+  resume: { position: number };
   enterfullscreen: undefined;
   exitfullscreen: undefined;
   enterpip: undefined;

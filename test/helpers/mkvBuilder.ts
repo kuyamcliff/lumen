@@ -103,6 +103,7 @@ export const MKV_ID = {
   Segment: 0x18538067,
   Info: 0x1549a966,
   TimestampScale: 0x2ad7b1,
+  Duration: 0x4489,
   Tracks: 0x1654ae6b,
   TrackEntry: 0xae,
   TrackNumber: 0xd7,
@@ -230,6 +231,8 @@ export function audioTrackEntry(spec: AudioTrackSpec): Uint8Array {
 export interface MkvSpec {
   docType?: string;
   timestampScaleNs?: number;
+  /** Segment duration, in TimestampScale ticks. Omitted when unset. */
+  durationTicks?: number;
   trackEntries: Uint8Array[];
   clusters: Array<{ timestamp: number; blocks: Uint8Array[] }>;
   /** Real muxers usually write Segment with an unknown size; default true. */
@@ -242,6 +245,8 @@ export function buildMkv(spec: MkvSpec): Uint8Array {
   const info = element(
     MKV_ID.Info,
     element(MKV_ID.TimestampScale, uint(spec.timestampScaleNs ?? 1_000_000)),
+    // Matroska stores Duration as a float, not an integer.
+    ...(spec.durationTicks === undefined ? [] : [element(MKV_ID.Duration, float64(spec.durationTicks))]),
   );
   const tracks = element(MKV_ID.Tracks, ...spec.trackEntries);
   const clusters = spec.clusters.map((cluster) =>

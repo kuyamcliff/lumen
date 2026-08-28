@@ -8,12 +8,22 @@ import { ChapterManager } from "./media/ChapterManager";
 import { CastController } from "./media/CastController";
 import { Translator, type LumenStrings } from "./i18n";
 import { DrmController, type LumenDrmConfig } from "./core/DrmController";
+import { AudioController, type AudioEffectState } from "./audio/AudioController";
+import { VideoFilters, type VideoFilterState } from "./video/VideoFilters";
+import { LoopController, type AbLoop, type RepeatMode } from "./media/LoopController";
+import { PositionMemory } from "./media/PositionMemory";
+import type { MediaInfoProbe, LumenMediaInfo } from "./media/MediaInfo";
+import type { SnapshotOptions } from "./media/Snapshot";
+import { containerLabel } from "./core/containers";
+import { bufferedAhead, clamp, formatTime, timeRanges } from "./utils/time";
 import type { LumenPlugin } from "./plugins/types";
 import type {
   LumenAudioTrack,
+  LumenBookmarkEntry,
   LumenChapter,
   LumenEventMap,
   LumenEventName,
+  LumenPanel,
   LumenPlaylistItem,
   LumenQualityLevel,
   LumenSource,
@@ -37,6 +47,7 @@ const OBSERVED = [
   "thumbnails",
   "chapters",
   "lang",
+  "resume",
 ] as const;
 
 /**
@@ -67,6 +78,23 @@ export class LumenPlayer extends HTMLElement {
   private drmConfig: LumenDrmConfig = {};
   private plugins: LumenPlugin[] = [];
   private pluginTeardowns: Array<() => void> = [];
+
+  private audioController!: AudioController;
+  private videoFilters!: VideoFilters;
+  private loopController!: LoopController;
+  private positions = new PositionMemory();
+  /** Frame-rate/bitrate sampler; loaded on demand — see `startProbe`. */
+  private probe: MediaInfoProbe | null = null;
+  private probeLoading: Promise<MediaInfoProbe | null> | null = null;
+  private repeatMode: RepeatMode = "off";
+  private shuffleEnabled = false;
+  /** Playback order under shuffle; empty when playing in list order. */
+  private shuffleOrder: number[] = [];
+  /** Object URLs created for local files, revoked when they're replaced. */
+  private objectUrls: string[] = [];
+  private lastSavedPosition = 0;
+  /** Removers for the listeners `bindPlaybackMemory` installs. */
+  private memoryTeardowns: Array<() => void> = [];
 
   /** Plugins applied to every player instance created afterwards. */
   private static globalPlugins: LumenPlugin[] = [];
@@ -119,6 +147,14 @@ export class LumenPlayer extends HTMLElement {
       this.emitter.emit("castavailabilitychange", { available }),
     );
 
+    this.audioController = new AudioController(this.video, () =>
+      this.controls?.announce(this.translator.t("audioEffectsUnavailable")),
+    );
+    this.videoFilters = new VideoFilters(this.video, this, this.root, () =>
+      this.emitter.emit("videofilterchange", { filters: this.videoFilters.filters }),
+    );
+    this.loopController = new LoopController(this.video, this.emitter);
+
     this.controls = new ControlsController({
       root: this.root,
       video: this.video,
@@ -129,22 +165,10 @@ export class LumenPlayer extends HTMLElement {
       chapters: this.chapterManager,
       cast: this.castController,
       strings: this.translator,
-      playlist: {
-        hasPlaylist: () => this.items.length > 1,
-        hasNext: () => this.itemIndex >= 0 && this.itemIndex < this.items.length - 1,
-        hasPrevious: () => this.itemIndex > 0,
-        next: () => this.next(),
-        previous: () => this.previous(),
-      },
-      retry: () => this.engine.load(this.pendingSources),
+      player: this,
     });
 
-    // Advancing a playlist is the one place the player reacts to `ended`
-    // itself; without a playlist it stays out of the way.
-    this.video.addEventListener("ended", () => {
-      if (this.video.loop) return;
-      if (this.itemIndex >= 0 && this.itemIndex < this.items.length - 1) this.next();
-    });
+    this.bindPlaybackMemory();
 
     this.applyTheme();
     this.applyAspectRatio();
@@ -162,6 +186,126 @@ export class LumenPlayer extends HTMLElement {
     }
 
     this.emitter.emit("ready", undefined);
+  }
+
+  /**
+   * Wires the behaviours that outlive a single frame of playback: what
+   * happens at the end of an item, and remembering where the viewer got to.
+   */
+  private bindPlaybackMemory(): void {
+    const on = <K extends keyof HTMLMediaElementEventMap>(
+      type: K,
+      listener: (event: HTMLMediaElementEventMap[K]) => void,
+    ) => {
+      this.video.addEventListener(type, listener);
+      this.memoryTeardowns.push(() => this.video.removeEventListener(type, listener));
+    };
+
+    on("ended", () => this.onEnded());
+
+    on("timeupdate", () => {
+      const time = this.video.currentTime;
+      // Written at most every five seconds: this runs four times a second
+      // and localStorage is synchronous.
+      if (Math.abs(time - this.lastSavedPosition) < 5) return;
+      this.lastSavedPosition = time;
+      this.positions.save(time, this.video.duration);
+    });
+
+    on("pause", () => {
+      this.positions.save(this.video.currentTime, this.video.duration);
+    });
+
+    on("loadedmetadata", () => {
+      this.probe?.reset();
+      this.videoFilters.refresh();
+      this.controls.refreshTimeline();
+      this.maybeResume();
+    });
+  }
+
+  /**
+   * Resumes where the viewer left off, unless `resume="off"` says not to.
+   *
+   * Only positions far enough from both ends qualify, so this never
+   * hijacks a file that was barely started or already finished.
+   */
+  private maybeResume(): void {
+    if (this.getAttribute("resume") === "off") return;
+    const position = this.positions.resumePosition(this.video.duration);
+    if (position === null) return;
+    this.video.currentTime = position;
+    this.lastSavedPosition = position;
+    this.emitter.emit("resume", { position });
+    this.controls.announce(this.translator.t("resumedAt", formatTime(position)));
+  }
+
+  /** End-of-item behaviour: repeat, then playlist advance, then nothing. */
+  private onEnded(): void {
+    this.positions.clearPosition();
+    this.lastSavedPosition = 0;
+    if (this.video.loop) return;
+
+    if (this.repeatMode === "one") {
+      this.video.currentTime = 0;
+      void this.video.play().catch(() => {});
+      return;
+    }
+
+    const nextIndex = this.nextIndex();
+    if (nextIndex !== null) void this.playItem(nextIndex);
+  }
+
+  /**
+   * The index to play after the current one, honouring shuffle and repeat.
+   * Returns null when the queue is finished.
+   */
+  private nextIndex(): number | null {
+    if (this.items.length === 0 || this.itemIndex < 0) return null;
+
+    if (this.shuffleEnabled) {
+      const position = this.shuffleOrder.indexOf(this.itemIndex);
+      const next = this.shuffleOrder[position + 1];
+      if (next !== undefined) return next;
+      if (this.repeatMode !== "all") return null;
+      // A fresh shuffle for the next pass, so a repeat isn't the same order.
+      this.reshuffle();
+      return this.shuffleOrder[0] ?? null;
+    }
+
+    if (this.itemIndex < this.items.length - 1) return this.itemIndex + 1;
+    return this.repeatMode === "all" ? 0 : null;
+  }
+
+  private previousIndex(): number | null {
+    if (this.items.length === 0 || this.itemIndex < 0) return null;
+
+    if (this.shuffleEnabled) {
+      const position = this.shuffleOrder.indexOf(this.itemIndex);
+      const previous = this.shuffleOrder[position - 1];
+      if (previous !== undefined) return previous;
+      return this.repeatMode === "all" ? (this.shuffleOrder[this.shuffleOrder.length - 1] ?? null) : null;
+    }
+
+    if (this.itemIndex > 0) return this.itemIndex - 1;
+    return this.repeatMode === "all" ? this.items.length - 1 : null;
+  }
+
+  /** Fisher-Yates over the item indices, keeping the current one first. */
+  private reshuffle(): void {
+    const order = this.items.map((_, index) => index);
+    for (let i = order.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [order[i], order[j]] = [order[j]!, order[i]!];
+    }
+    if (this.itemIndex >= 0) {
+      const at = order.indexOf(this.itemIndex);
+      if (at > 0) {
+        order.splice(at, 1);
+        order.unshift(this.itemIndex);
+      }
+    }
+    this.shuffleOrder = order;
   }
 
   disconnectedCallback(): void {
@@ -266,6 +410,12 @@ export class LumenPlayer extends HTMLElement {
   async load(sources: string | LumenSource | LumenSource[]): Promise<void> {
     const list = Array.isArray(sources) ? sources : [sources];
     this.pendingSources = list.map((source) => (typeof source === "string" ? { src: source } : source));
+    // Position memory and the A-B loop belong to one file; a new source
+    // starts both over.
+    this.positions.track(this.pendingSources[0]?.src ?? null);
+    this.lastSavedPosition = 0;
+    this.loopController?.clear();
+    this.probe?.reset();
     await this.engine?.load(this.pendingSources);
   }
 
@@ -305,9 +455,13 @@ export class LumenPlayer extends HTMLElement {
 
   set playlist(items: LumenPlaylistItem[]) {
     this.items = [...items];
+    this.itemIndex = -1;
+    if (this.shuffleEnabled) this.reshuffle();
     this.emitter.emit("playlistchange", { items: this.items });
     this.controls?.refreshPlaylistButtons();
-    if (this.items.length > 0) void this.playItem(0);
+    // Shuffle decides where a shuffled queue starts; otherwise it's the top.
+    const first = this.shuffleEnabled ? this.shuffleOrder[0] ?? 0 : 0;
+    if (this.items.length > 0) void this.playItem(first);
   }
 
   get playlistIndex(): number {
@@ -341,11 +495,13 @@ export class LumenPlayer extends HTMLElement {
   }
 
   next(): void {
-    if (this.itemIndex < this.items.length - 1) void this.playItem(this.itemIndex + 1);
+    const index = this.nextIndex();
+    if (index !== null) void this.playItem(index);
   }
 
   previous(): void {
-    if (this.itemIndex > 0) void this.playItem(this.itemIndex - 1);
+    const index = this.previousIndex();
+    if (index !== null) void this.playItem(index);
   }
 
   private clearItemState(): void {
@@ -355,6 +511,384 @@ export class LumenPlayer extends HTMLElement {
     }
     this.chapterManager.reset();
     this.controls.setPoster(null);
+  }
+
+  // ------------------------------------------- playlist bridge (for the UI)
+
+  hasPlaylist(): boolean {
+    return this.items.length > 1;
+  }
+
+  hasNext(): boolean {
+    return this.nextIndex() !== null;
+  }
+
+  hasPrevious(): boolean {
+    return this.previousIndex() !== null;
+  }
+
+  playlistItems(): LumenPlaylistItem[] {
+    return this.items;
+  }
+
+  currentPlaylistIndex(): number {
+    return this.itemIndex;
+  }
+
+  getRepeat(): RepeatMode {
+    return this.repeatMode;
+  }
+
+  setRepeat(mode: RepeatMode): void {
+    this.repeatMode = mode;
+    this.emitter.emit("repeatchange", { mode });
+    this.controls?.refreshPlaylistButtons();
+  }
+
+  /** Convenience alias for `getRepeat()`/`setRepeat()`. */
+  get repeat(): RepeatMode {
+    return this.repeatMode;
+  }
+
+  set repeat(mode: RepeatMode) {
+    this.setRepeat(mode);
+  }
+
+  getShuffle(): boolean {
+    return this.shuffleEnabled;
+  }
+
+  setShuffle(shuffle: boolean): void {
+    this.shuffleEnabled = shuffle;
+    if (shuffle) this.reshuffle();
+    else this.shuffleOrder = [];
+    this.emitter.emit("shufflechange", { shuffle });
+    this.controls?.refreshPlaylistButtons();
+  }
+
+  get shuffle(): boolean {
+    return this.shuffleEnabled;
+  }
+
+  set shuffle(value: boolean) {
+    this.setShuffle(value);
+  }
+
+  // ------------------------------------------------------ audio effects
+
+  /**
+   * The audio processing chain: equalizer, preamp, volume boost, audio
+   * delay, stereo routing and the normalizer.
+   *
+   * ```js
+   * player.audio.setPreset("rock");
+   * player.audio.set({ boost: 1.5, delayMs: 120 });
+   * ```
+   *
+   * Nothing is engaged until something is actually set, because routing an
+   * element through Web Audio is permanent and needs same-origin media.
+   */
+  get audio(): AudioController {
+    return this.audioController;
+  }
+
+  get audioEffects(): AudioEffectState {
+    return this.audioController.effects;
+  }
+
+  setAudioEffects(patch: Partial<AudioEffectState>): void {
+    this.audioController.set(patch);
+    this.emitter.emit("audioeffectchange", { effects: this.audioController.effects });
+  }
+
+  /** Loads one of the eighteen VLC equalizer presets by id, e.g. `"rock"`. */
+  setEqualizerPreset(id: string): boolean {
+    const applied = this.audioController.setPreset(id);
+    if (applied) this.emitter.emit("audioeffectchange", { effects: this.audioController.effects });
+    return applied;
+  }
+
+  // ------------------------------------------------------ video filters
+
+  /** Picture adjustments and geometry: brightness, gamma, zoom, rotation… */
+  get filters(): VideoFilters {
+    return this.videoFilters;
+  }
+
+  get videoFilterState(): VideoFilterState {
+    return this.videoFilters.filters;
+  }
+
+  setVideoFilters(patch: Partial<VideoFilterState>): void {
+    this.videoFilters.set(patch);
+  }
+
+  // ------------------------------------------------------------ looping
+
+  /** The A→B loop controller. */
+  get loop(): LoopController {
+    return this.loopController;
+  }
+
+  get abLoop(): AbLoop | null {
+    return this.loopController.abLoop;
+  }
+
+  setAbLoop(loop: AbLoop | null): void {
+    this.loopController.set(loop);
+  }
+
+  /** Advances the A→B loop: sets A, then B, then clears. */
+  cycleAbLoop(): void {
+    this.controls.cycleAbLoop();
+  }
+
+  // ---------------------------------------------------- frame stepping
+
+  /**
+   * Measured frame rate, once enough frames have been presented to know
+   * it. Null before then — the container often doesn't say.
+   */
+  get frameRate(): number | null {
+    void this.startProbe();
+    return this.probe?.frameRate ?? null;
+  }
+
+  /**
+   * Loads and starts the frame-rate/bitrate sampler.
+   *
+   * Nothing needs it until something asks for statistics or steps a frame,
+   * so it stays out of the core bundle and out of the render loop until
+   * then. The first `frameRate` read after that still returns null — one
+   * sample can't establish a rate — which is why `stepFrame` has a default.
+   */
+  private async startProbe(): Promise<void> {
+    if (this.probe || !this.connected) return;
+    if (!this.probeLoading) {
+      this.probeLoading = import("./media/MediaInfo")
+        .then(({ MediaInfoProbe }) => {
+          this.probe = new MediaInfoProbe(this.video);
+          this.probe.start();
+          return this.probe;
+        })
+        .catch(() => null);
+    }
+    await this.probeLoading;
+  }
+
+  /**
+   * Steps one frame, pausing first — VLC's `e`.
+   *
+   * Without a measured rate this falls back to 25 fps, which lands within
+   * a frame of the truth for anything between 24 and 30.
+   */
+  stepFrame(direction = 1): void {
+    const fps = this.frameRate && this.frameRate > 1 ? this.frameRate : 25;
+    this.video.pause();
+    const duration = Number.isFinite(this.video.duration) ? this.video.duration : Number.MAX_SAFE_INTEGER;
+    this.video.currentTime = clamp(this.video.currentTime + direction / fps, 0, duration);
+  }
+
+  // --------------------------------------------------------- snapshots
+
+  /**
+   * Captures the current frame as an encoded image.
+   *
+   * The capture code is imported on demand — a page that never takes a
+   * snapshot shouldn't carry a canvas encoder.
+   */
+  async snapshot(options: SnapshotOptions = {}): Promise<Blob> {
+    const { captureFrame, encodeSnapshot } = await import("./media/Snapshot");
+    const canvas = captureFrame(this.video, { ...options, cssFilter: this.videoFilters.cssFilter() });
+    return encodeSnapshot(canvas, options);
+  }
+
+  /** Captures the current frame and saves it — VLC's Shift+S. */
+  async saveSnapshot(options: SnapshotOptions = {}): Promise<void> {
+    try {
+      const blob = await this.snapshot(options);
+      const { snapshotFilename, downloadBlob } = await import("./media/Snapshot");
+      const filename = snapshotFilename(options.type ?? "image/png");
+      this.emitter.emit("snapshot", { blob, filename });
+      downloadBlob(blob, filename);
+      this.controls.announce(this.translator.t("snapshotSaved", filename));
+    } catch (error) {
+      const { SnapshotError } = await import("./media/Snapshot");
+      const message =
+        error instanceof SnapshotError && error.reason === "tainted"
+          ? error.message
+          : this.translator.t("snapshotUnavailable");
+      this.controls.announce(message);
+      this.emitter.emit("error", { code: "UNKNOWN", message, fatal: false, raw: error });
+    }
+  }
+
+  // --------------------------------------------------------- bookmarks
+
+  getBookmarks(): LumenBookmarkEntry[] {
+    return this.positions.bookmarks;
+  }
+
+  get bookmarks(): LumenBookmarkEntry[] {
+    return this.positions.bookmarks;
+  }
+
+  /** Marks the current position. Defaults to the timestamp as its label. */
+  addBookmark(label?: string): void {
+    const time = this.video.currentTime;
+    const bookmarks = this.positions.addBookmark({ time, label: label ?? formatTime(time) });
+    this.emitter.emit("bookmarkschange", { bookmarks });
+  }
+
+  removeBookmark(time: number): void {
+    const bookmarks = this.positions.removeBookmark(time);
+    this.emitter.emit("bookmarkschange", { bookmarks });
+  }
+
+  // --------------------------------------------------------- media info
+
+  /** A live snapshot of what's playing and how well — VLC's Ctrl+I. */
+  mediaInfo(): LumenMediaInfo {
+    void this.startProbe();
+    const quality = this.video.getVideoPlaybackQuality?.();
+    const measured = this.probe?.sampleBitrate() ?? null;
+
+    return {
+      // The element's own `currentSrc` is a blob: URL whenever a remuxer is
+      // driving it, which tells a viewer nothing; the URL they asked for
+      // does.
+      source: this.pendingSources[0]?.src || this.video.currentSrc || "",
+      container: containerLabel(this.engine?.container ?? "unknown"),
+      engine: this.engine?.engineName ?? "native",
+      codecs: this.engine?.codecs ?? null,
+      width: this.video.videoWidth,
+      height: this.video.videoHeight,
+      frameRate: this.probe?.frameRate ?? null,
+      duration: this.video.duration,
+      // An adaptive engine knows the exact level bitrate; everything else
+      // has to be measured from the decoded-byte counters.
+      bitrateKbps: this.engine?.reportedBitrateKbps ?? measured,
+      droppedFrames: quality?.droppedVideoFrames ?? 0,
+      decodedFrames: quality?.totalVideoFrames ?? 0,
+      bufferAheadSeconds: bufferedAhead(this.video.buffered, this.video.currentTime),
+      bufferedRanges: timeRanges(this.video.buffered),
+      audioTrackCount: this.engine?.audioTracks.length ?? 0,
+      textTrackCount: this.subtitles?.tracks.length ?? 0,
+      playbackRate: this.video.playbackRate,
+      readyState: this.video.readyState,
+    };
+  }
+
+  // ------------------------------------------------------- local files
+
+  /**
+   * Plays files from the viewer's machine — the file picker, and whatever
+   * gets dropped onto the player.
+   *
+   * Video files become the queue; subtitle files are converted to WebVTT
+   * and attached to whatever is playing, so dropping a movie and its
+   * `.srt` together does the obvious thing.
+   */
+  async openFiles(files: File[]): Promise<void> {
+    const { sortFiles, titleFromFilename } = await import("./media/files");
+    const { media, subtitles, rejected } = sortFiles(files);
+
+    if (media.length > 0) {
+      this.revokeObjectUrls();
+      const items: LumenPlaylistItem[] = media.map((file) => {
+        const url = URL.createObjectURL(file);
+        this.objectUrls.push(url);
+        return { src: url, title: titleFromFilename(file.name) };
+      });
+
+      // One file or twenty, the queue is the same mechanism — which also
+      // means each one gets the same per-item cleanup of the last file's
+      // subtitles, chapters and poster.
+      this.playlist = items;
+    }
+
+    for (const file of subtitles) {
+      await this.addSubtitleFile(file);
+    }
+
+    if (media.length === 0 && subtitles.length === 0 && rejected.length > 0) {
+      this.controls.announce(this.translator.t("unsupportedFile"));
+    }
+  }
+
+  /** Convenience wrapper for a single file. */
+  openFile(file: File): Promise<void> {
+    return this.openFiles([file]);
+  }
+
+  /**
+   * Loads a subtitle file of any supported format.
+   *
+   * The converter is a dynamic import: pages that only ever see WebVTT
+   * shouldn't download an ASS parser.
+   */
+  async addSubtitleFile(file: File): Promise<void> {
+    try {
+      const text = await file.text();
+      const [{ toWebVttUrl }, { languageFromFilename, titleFromFilename }] = await Promise.all([
+        import("./subtitles/convert"),
+        import("./media/files"),
+      ]);
+      const url = toWebVttUrl(text, file.name);
+      this.objectUrls.push(url);
+
+      const language = languageFromFilename(file.name);
+      this.subtitles.addTrack({
+        src: url,
+        label: titleFromFilename(file.name),
+        srclang: language ?? "und",
+        default: this.subtitles.tracks.length === 0,
+      });
+      this.controls.announce(this.translator.t("subtitleFileAdded"));
+    } catch {
+      this.controls.announce(this.translator.t("unsupportedFile"));
+    }
+  }
+
+  private revokeObjectUrls(): void {
+    for (const url of this.objectUrls) URL.revokeObjectURL(url);
+    this.objectUrls = [];
+  }
+
+  // ---------------------------------------------------- subtitle timing
+
+  /** Subtitle delay in seconds; positive shows cues later — VLC's `g`/`h`. */
+  getSubtitleOffset(): number {
+    return this.subtitles.prefs.offsetSeconds;
+  }
+
+  setSubtitleOffset(seconds: number): void {
+    this.subtitles.setPrefs({ offsetSeconds: seconds });
+  }
+
+  get subtitleOffset(): number {
+    return this.getSubtitleOffset();
+  }
+
+  set subtitleOffset(seconds: number) {
+    this.setSubtitleOffset(seconds);
+  }
+
+  // ------------------------------------------------------------- panels
+
+  /** Opens a side panel, or closes the open one with `null`. */
+  openPanel(panel: LumenPanel | null): void {
+    if (panel === null) this.controls.closePanel();
+    else void this.controls.openPanel(panel);
+  }
+
+  get panel(): LumenPanel | null {
+    return this.controls?.openPanelView ?? null;
+  }
+
+  /** Re-loads the current source; also what the error UI's retry does. */
+  retry(): void {
+    void this.engine.load(this.pendingSources);
   }
 
   // ------------------------------------------------------------- chapters
@@ -538,6 +1072,13 @@ export class LumenPlayer extends HTMLElement {
     this.controls?.destroy();
     this.subtitles?.destroy();
     this.engine?.destroy();
+    for (const teardown of this.memoryTeardowns) teardown();
+    this.memoryTeardowns = [];
+    this.loopController?.destroy();
+    this.audioController?.destroy();
+    this.videoFilters?.destroy();
+    this.probe?.stop();
+    this.revokeObjectUrls();
     this.emitter.clear();
   }
 }

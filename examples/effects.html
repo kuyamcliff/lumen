@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lumen — Equalizer, filters and the rest of the VLC toolkit</title>
+    <link rel="stylesheet" href="./shared.css" />
+    <style>
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 12px 0 4px;
+      }
+      .row button {
+        font: inherit;
+        font-size: 0.82rem;
+        color: #f0f0f2;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 8px;
+        padding: 7px 11px;
+        cursor: pointer;
+      }
+      .row button:hover {
+        background: rgba(255, 255, 255, 0.15);
+      }
+      .log {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.76rem;
+        color: rgba(240, 240, 242, 0.6);
+        white-space: pre-wrap;
+        margin-top: 10px;
+        min-height: 1.2em;
+      }
+      dl.keys {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 6px 16px;
+        font-size: 0.86rem;
+        margin: 0;
+      }
+      dl.keys dt {
+        color: rgba(240, 240, 242, 0.95);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      dl.keys dd {
+        margin: 0;
+        color: rgba(240, 240, 242, 0.72);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>The rest of the toolkit</h1>
+      <p>
+        Everything a desktop player has and a web player usually doesn't: a
+        ten-band equalizer, picture adjustments, audio and subtitle sync,
+        A&nbsp;→&nbsp;B looping, frame stepping, snapshots, a media
+        information panel, and files opened straight from your machine.
+        Press <code>?</code> in the player for the full shortcut list.
+      </p>
+
+      <lumen-player id="player" src="./media/sample-vp9.mkv" crossorigin="anonymous">
+        <track kind="subtitles" src="./media/sample-en.vtt" srclang="en" label="English" default />
+      </lumen-player>
+      <div class="log" id="log"></div>
+
+      <h2>Equalizer</h2>
+      <p>
+        The ten centre frequencies and all eighteen preset curves are VLC's,
+        running through Web Audio biquad filters. Press <code>q</code> in the
+        player to open the panel and drag the bands.
+      </p>
+      <div class="row">
+        <button data-preset="rock">Rock</button>
+        <button data-preset="fullbass">Full bass</button>
+        <button data-preset="fulltreble">Full treble</button>
+        <button data-preset="headphones">Headphones</button>
+        <button data-preset="flat">Flat</button>
+        <button data-panel="equalizer">Open the panel</button>
+      </div>
+      <pre><code>player.setEqualizerPreset("rock");
+player.audio.set({ preamp: -3, bands: [8, 4.8, -5.6, -8, -3.2, 4, 8.8, 11.2, 11.2, 11.2] });</code></pre>
+
+      <h2>Audio: boost, delay, stereo mode, normalizer</h2>
+      <p>
+        Volume above 100% for a quietly mastered file, a delay for audio
+        that runs ahead of the picture, channel routing, and dynamic-range
+        compression to even out a film that whispers and then shouts.
+      </p>
+      <div class="row">
+        <button data-audio='{"boost":1.8}'>Boost to 180%</button>
+        <button data-audio='{"delayMs":200}'>Delay audio 200 ms</button>
+        <button data-audio='{"stereo":"mono"}'>Mono</button>
+        <button data-audio='{"normalize":true}'>Normalize</button>
+        <button data-audio="reset">Reset audio</button>
+      </div>
+      <pre><code>player.audio.set({ boost: 1.8, delayMs: 200, stereo: "mono", normalize: true });</code></pre>
+
+      <h2>Picture adjustments</h2>
+      <p>
+        Brightness, contrast, saturation, hue and gamma, plus zoom,
+        rotation, flips and a forced aspect ratio — all compositor work, so
+        none of it touches the decoded frames.
+      </p>
+      <div class="row">
+        <button data-filter='{"brightness":1.35,"saturation":1.6}'>Brighter &amp; punchier</button>
+        <button data-filter='{"gamma":1.8}'>Lift the shadows</button>
+        <button data-filter='{"saturation":0}'>Black &amp; white</button>
+        <button data-filter='{"rotation":90}'>Rotate 90°</button>
+        <button data-filter='{"zoom":1.4}'>Zoom 140%</button>
+        <button data-filter='{"aspectRatio":"4/3"}'>Force 4:3</button>
+        <button data-filter="reset">Reset picture</button>
+      </div>
+      <pre><code>player.setVideoFilters({ brightness: 1.35, saturation: 1.6, gamma: 1.8 });
+player.filters.rotate();       // a quarter turn, as VLC's `r` does
+player.filters.cycleAspectRatio();</code></pre>
+
+      <h2>A → B loop, frame stepping, snapshots</h2>
+      <p>
+        Mark two points and the player repeats between them. Step a single
+        frame at a time. Save the frame on screen as a PNG.
+      </p>
+      <div class="row">
+        <button data-action="ab">Cycle A → B → off</button>
+        <button data-action="step">Step one frame</button>
+        <button data-action="snapshot">Take a snapshot</button>
+        <button data-action="bookmark">Bookmark this moment</button>
+      </div>
+      <pre><code>player.cycleAbLoop();          // A, then B, then clear
+player.setAbLoop({ start: 12, end: 18 });
+player.stepFrame(1);           // and -1 to step back
+await player.saveSnapshot();   // downloads a PNG of the current frame</code></pre>
+
+      <h2>Media information</h2>
+      <p>
+        What is playing, which pipeline is playing it, and how well —
+        resolution, measured frame rate, bitrate, dropped frames and buffer
+        health. Press <code>i</code>, or read the same numbers from the API.
+      </p>
+      <div class="row">
+        <button data-panel="info">Open the panel</button>
+        <button data-action="info">Log it here</button>
+      </div>
+      <pre><code>const info = player.mediaInfo();
+// { container: "Matroska (MKV)", engine: "MKV remux", codecs: "vp09.00.31.08,opus",
+//   width: 1280, height: 720, frameRate: 30, droppedFrames: 0, … }</code></pre>
+
+      <h2>Open a file from your machine</h2>
+      <p>
+        Drag a video onto the player, or press <code>o</code>. Subtitles in
+        SRT, ASS/SSA, SubViewer or MicroDVD are converted to WebVTT in the
+        browser — drop a movie and its <code>.srt</code> together and both
+        land where you'd expect.
+      </p>
+      <div class="row">
+        <button data-action="open">Choose a file…</button>
+      </div>
+
+      <h2>Keyboard</h2>
+      <dl class="keys">
+        <dt>e / Shift+E</dt><dd>Step one frame forward / back</dd>
+        <dt>g / h</dt><dd>Nudge the subtitle delay by 50 ms</dd>
+        <dt>Shift+G / Shift+H</dt><dd>Nudge the audio delay by 50 ms</dd>
+        <dt>a / z / r</dt><dd>Cycle aspect ratio, zoom, rotation</dd>
+        <dt>b / v</dt><dd>Cycle audio track, cycle subtitles</dd>
+        <dt>Shift+A</dt><dd>A → B loop</dd>
+        <dt>Shift+B</dt><dd>Add a bookmark</dd>
+        <dt>s</dt><dd>Snapshot</dd>
+        <dt>q / x / p / i</dt><dd>Equalizer, effects, playlist, media info</dd>
+        <dt>o</dt><dd>Open a file</dd>
+        <dt>?</dt><dd>Every shortcut, in the player</dd>
+      </dl>
+    </main>
+
+    <script type="module">
+      import "/src/index.ts";
+
+      const player = document.getElementById("player");
+      const log = document.getElementById("log");
+      const write = (line) => {
+        log.textContent = line;
+      };
+
+      document.querySelectorAll("[data-preset]").forEach((button) => {
+        button.addEventListener("click", () => {
+          player.setEqualizerPreset(button.dataset.preset);
+          write(`equalizer: ${button.textContent}`);
+        });
+      });
+
+      document.querySelectorAll("[data-audio]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (button.dataset.audio === "reset") player.audio.reset();
+          else player.audio.set(JSON.parse(button.dataset.audio));
+          write(`audio: ${JSON.stringify(player.audioEffects)}`);
+        });
+      });
+
+      document.querySelectorAll("[data-filter]").forEach((button) => {
+        button.addEventListener("click", () => {
+          if (button.dataset.filter === "reset") player.filters.reset();
+          else player.setVideoFilters(JSON.parse(button.dataset.filter));
+          write(`picture: ${player.filters.cssFilter()} / ${player.filters.cssTransform()}`);
+        });
+      });
+
+      document.querySelectorAll("[data-panel]").forEach((button) => {
+        button.addEventListener("click", () => player.openPanel(button.dataset.panel));
+      });
+
+      const actions = {
+        ab: () => {
+          player.cycleAbLoop();
+          const loop = player.abLoop;
+          write(loop ? `loop: ${loop.start.toFixed(1)}s → ${loop.end?.toFixed(1) ?? "…"}` : "loop cleared");
+        },
+        step: () => {
+          player.stepFrame(1);
+          write(`t = ${player.currentTime.toFixed(3)}s (${player.frameRate?.toFixed(2) ?? "?"} fps)`);
+        },
+        snapshot: () => void player.saveSnapshot(),
+        bookmark: () => {
+          player.addBookmark();
+          write(`bookmarks: ${player.bookmarks.map((b) => b.label).join(", ")}`);
+        },
+        info: () => write(JSON.stringify(player.mediaInfo(), null, 1)),
+        open: () => player.openPanel("playlist"),
+      };
+
+      document.querySelectorAll("[data-action]").forEach((button) => {
+        button.addEventListener("click", () => actions[button.dataset.action]?.());
+      });
+
+      player.on("snapshot", ({ filename }) => write(`snapshot saved: ${filename}`));
+      player.on("resume", ({ position }) => write(`resumed at ${position.toFixed(1)}s`));
+      player.on("error", (e) => write(`${e.fatal ? "error" : "notice"}: ${e.message}`));
+    </script>
+  </body>
+</html>
