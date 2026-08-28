@@ -96,6 +96,7 @@ export interface LumenStrings {
   nothingPlaying: string;
   audioEffects: string;
   videoEffects: string;
+  spectrumHint: string;
 
   subtitleSize: string;
   subtitleBackground: string;
@@ -238,6 +239,7 @@ export const DEFAULT_STRINGS: LumenStrings = {
   nothingPlaying: "Nothing is playing",
   audioEffects: "Audio",
   videoEffects: "Video",
+  spectrumHint: "Turn the equalizer on to see the spectrum",
 
   subtitleSize: "Size",
   subtitleBackground: "Background",

@@ -164,7 +164,7 @@ and use the `CONTAINER_UNSUPPORTED` error to prompt for it.
 | Offline/PWA helpers (Cache API + range-aware service worker) | ✅ |
 | React, Vue and Svelte wrappers | ✅ |
 | AVI via built-in RIFF demuxer + fMP4 remuxer | ✅ |
-| Ten-band equalizer with VLC's eighteen preset curves | ✅ (see [The VLC toolkit](#the-vlc-toolkit)) |
+| Ten-band equalizer with VLC's eighteen preset curves and a live spectrum | ✅ (see [The VLC toolkit](#the-vlc-toolkit)) |
 | Volume boost to 300%, audio delay, stereo routing, volume normalizer | ✅ |
 | Brightness, contrast, saturation, hue, gamma | ✅ |
 | Zoom, rotation, flips, forced aspect ratio, crop-to-fill | ✅ |
@@ -182,7 +182,7 @@ Press <kbd>?</kbd> in any player for the full keyboard reference, or open
 
 | Panel | Opens with | What's in it |
 | --- | --- | --- |
-| **Equalizer** | <kbd>q</kbd> | Ten bands, preamp, VLC's eighteen presets |
+| **Equalizer** | <kbd>q</kbd> | Ten bands, preamp, VLC's eighteen presets, a live spectrum |
 | **Effects** | <kbd>x</kbd> | Audio (boost, delay, stereo mode, normalizer), Video (brightness, contrast, saturation, hue, gamma, zoom, rotation, flips, aspect ratio, fit), Captions (delay, size, background, edge, position) |
 | **Playlist** | <kbd>p</kbd> | The queue, repeat modes, shuffle, bookmarks, "open file" |
 | **Media information** | <kbd>i</kbd> | Container, pipeline, codecs, resolution, measured frame rate, bitrate, dropped frames, buffer health |
@@ -194,7 +194,10 @@ The ten centre frequencies (60 Hz … 16 kHz) and all eighteen preset curves
 are the ones VLC ships, running through Web Audio biquad filters — a
 shelf at each end, peaks in between, each band's Q derived from the
 geometric distance to its neighbours so the three crowded bands above
-12 kHz don't pile on top of each other.
+12 kHz don't pile on top of each other. Above the faders is a live
+spectrum, drawn from the analyser at the end of the audio graph and spread
+logarithmically so the bars follow how the ear divides the range rather
+than how the FFT does.
 
 ```js
 player.setEqualizerPreset("rock");
@@ -722,9 +725,8 @@ Everything in the PRD is built. What remains is genuinely optional:
 - **A seek index for AVI.** The `idx1` table at the end of the file would
   give exact random access; today seeking a streamed AVI is limited to
   buffered ranges, as it is for a Cues-less MKV.
-- **A spectrum visualiser.** The analyser node is already in the audio
-  graph and `player.audio.getFrequencyData()` exposes it; nothing draws it
-  yet.
+- **Visualisers beyond the spectrum.** The equalizer panel draws a live
+  spectrum from the analyser; VLC's scope and vu-meter modes don't exist.
 - **Bitmap subtitles** (VOBSUB, PGS) in MKV need an image-rendering path;
   only text-based tracks become text tracks today.
 - **A native core with language bindings**, per the PRD's long-term

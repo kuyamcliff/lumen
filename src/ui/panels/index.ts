@@ -7,6 +7,7 @@ import { EQ_FREQUENCIES, EQ_GAIN_LIMIT, EQ_PRESETS } from "../../audio/presets";
 import { MAX_AUDIO_DELAY_MS, MAX_BOOST } from "../../audio/AudioController";
 import { ASPECT_RATIOS } from "../../video/VideoFilters";
 import { formatTime } from "../../utils/time";
+import { prefersReducedMotion } from "../../utils/dom";
 import { icon } from "../icons";
 import { SHORTCUTS } from "./shortcuts";
 
@@ -38,6 +39,8 @@ export class PanelController {
   private effectsTab: "audio" | "video" | "subtitles" = "audio";
   /** Nodes the info view updates in place, so it doesn't rebuild every second. */
   private liveFields = new Map<string, HTMLElement>();
+  /** Handle for the spectrum's animation frame, so it can be stopped. */
+  private spectrumFrame: number | null = null;
 
   constructor(host: PanelHost, body: HTMLElement, titleEl: HTMLElement) {
     this.host = host;
@@ -53,6 +56,7 @@ export class PanelController {
   render(view: LumenPanel): void {
     this.view = view;
     this.liveFields.clear();
+    this.stopSpectrum();
     this.body.replaceChildren();
 
     switch (view) {
@@ -82,6 +86,11 @@ export class PanelController {
   /** Updates the values a live view shows, without rebuilding the DOM. */
   refresh(): void {
     if (this.view === "info") this.updateInfo();
+  }
+
+  /** Called when the panel closes, so nothing keeps animating off-screen. */
+  stop(): void {
+    this.stopSpectrum();
   }
 
   // -------------------------------------------------------- playlist
@@ -275,6 +284,8 @@ export class PanelController {
       }),
     );
 
+    this.body.appendChild(this.buildSpectrum());
+
     const bank = document.createElement("div");
     bank.className = "lumen-eq";
 
@@ -317,6 +328,86 @@ export class PanelController {
     this.body.appendChild(bank);
 
     if (!audio.isAvailable) this.body.appendChild(this.notice(this.t("audioEffectsUnavailable")));
+  }
+
+  /**
+   * A live spectrum, drawn from the analyser already sitting at the end of
+   * the audio graph.
+   *
+   * It only draws once the graph exists — that is, once an effect has
+   * actually been engaged. Building the graph just to animate a strip
+   * would route the element through Web Audio permanently and end AirPlay
+   * handoff, which is far too much to spend on decoration.
+   */
+  private buildSpectrum(): HTMLElement {
+    const wrap = document.createElement("div");
+    wrap.className = "lumen-spectrum";
+
+    const canvas = document.createElement("canvas");
+    canvas.setAttribute("aria-hidden", "true");
+    wrap.appendChild(canvas);
+
+    const hint = document.createElement("span");
+    hint.className = "lumen-spectrum-hint";
+    hint.textContent = this.t("spectrumHint");
+    wrap.appendChild(hint);
+
+    const audio = this.host.bridge.audio;
+    const context = canvas.getContext("2d");
+    if (!context || prefersReducedMotion()) return wrap;
+
+    const bins = new Uint8Array(512);
+
+    const draw = () => {
+      this.spectrumFrame = requestAnimationFrame(draw);
+
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+      if (width === 0 || height === 0) return;
+
+      const ratio = Math.min(window.devicePixelRatio || 1, 2);
+      if (canvas.width !== Math.round(width * ratio)) {
+        canvas.width = Math.round(width * ratio);
+        canvas.height = Math.round(height * ratio);
+      }
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      context.clearRect(0, 0, width, height);
+
+      if (!audio.getFrequencyData(bins)) return;
+      hint.hidden = true;
+
+      const count = Math.min(audio.frequencyBinCount, bins.length);
+      const bars = 48;
+      const gap = 2;
+      const barWidth = (width - gap * (bars - 1)) / bars;
+      const accent = getComputedStyle(canvas).getPropertyValue("--lumen-color-accent").trim() || "#eab54c";
+
+      context.fillStyle = accent;
+      for (let i = 0; i < bars; i++) {
+        // Bins are linear in frequency but hearing isn't, so the bars are
+        // spread logarithmically — otherwise nine tenths of the display
+        // would be the top two octaves, where there is rarely anything.
+        const from = Math.floor(Math.pow(i / bars, 2) * count);
+        const to = Math.max(from + 1, Math.floor(Math.pow((i + 1) / bars, 2) * count));
+        let peak = 0;
+        for (let bin = from; bin < to && bin < count; bin++) peak = Math.max(peak, bins[bin] ?? 0);
+
+        const barHeight = Math.max(1, (peak / 255) * height);
+        context.globalAlpha = 0.35 + (peak / 255) * 0.65;
+        context.fillRect(i * (barWidth + gap), height - barHeight, barWidth, barHeight);
+      }
+      context.globalAlpha = 1;
+    };
+
+    this.spectrumFrame = requestAnimationFrame(draw);
+    return wrap;
+  }
+
+  private stopSpectrum(): void {
+    if (this.spectrumFrame !== null) {
+      cancelAnimationFrame(this.spectrumFrame);
+      this.spectrumFrame = null;
+    }
   }
 
   // --------------------------------------------------------- effects

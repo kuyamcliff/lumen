@@ -717,6 +717,7 @@ export class ControlsController {
     this.panelView = null;
     this.els.panel.hidden = true;
     this.root.classList.remove("has-panel");
+    this.panelController?.stop();
     this.els.panelBody.replaceChildren();
     this.stopStats();
     this.updatePanelButtons();
@@ -1555,6 +1556,7 @@ export class ControlsController {
     if (this.idleTimer) window.clearTimeout(this.idleTimer);
     if (this.clickTimer) window.clearTimeout(this.clickTimer);
     this.stopStats();
+    this.panelController?.stop();
     this.panelController = null;
   }
 }

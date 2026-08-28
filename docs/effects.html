@@ -23,7 +23,7 @@ everything at once.</p>
 <h2>Panels</h2>
 <table>
   <tr><th>Panel</th><th>Opens with</th><th>Contents</th></tr>
-  <tr><td><strong>Equalizer</strong></td><td><kbd>q</kbd></td><td>Ten bands, preamp, eighteen presets</td></tr>
+  <tr><td><strong>Equalizer</strong></td><td><kbd>q</kbd></td><td>Ten bands, preamp, eighteen presets, a live spectrum</td></tr>
   <tr><td><strong>Effects</strong></td><td><kbd>x</kbd></td><td>Audio, Video and Captions tabs</td></tr>
   <tr><td><strong>Playlist</strong></td><td><kbd>p</kbd></td><td>The queue, repeat, shuffle, bookmarks, open file</td></tr>
   <tr><td><strong>Media information</strong></td><td><kbd>i</kbd></td><td>Container, pipeline, codecs, resolution, frame rate, bitrate, dropped frames, buffer</td></tr>
@@ -59,6 +59,18 @@ player.audioEffects;   // { equalizer, preamp, bands, preset, boost, delayMs, st
 <code>live</code>, <code>party</code>, <code>pop</code>, <code>reggae</code>,
 <code>rock</code>, <code>ska</code>, <code>soft</code>, <code>softrock</code>,
 <code>techno</code>.</p>
+
+<h3>The spectrum</h3>
+<p>Above the faders is a live spectrum, drawn from the analyser node at the
+end of the audio graph. Its bars are spread logarithmically, because
+frequency bins are linear and hearing isn't — a linear layout would spend
+nine tenths of the display on the top two octaves, where there is rarely
+anything to see.</p>
+<p>It draws only once the audio graph exists, which is to say once an
+effect has actually been engaged. Building the graph purely to animate a
+strip would route the element through Web Audio permanently and end
+AirPlay handoff — far too much to spend on decoration. It also respects
+<code>prefers-reduced-motion</code>, where it does not animate at all.</p>
 
 <h3>Two deliberate differences from VLC</h3>
 <p><strong>Preamp is re-based.</strong> VLC stores each preset's preamp on

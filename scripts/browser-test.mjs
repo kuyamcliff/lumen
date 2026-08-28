@@ -377,6 +377,41 @@ try {
       player.openPanel(null);
       return { count: sliders.length, band0: state.bands[0], preset: state.preset };
     });
+    // --- the spectrum draws once the audio graph exists ---
+    const spectrum = await page.evaluate(async () => {
+      const player = document.getElementById("player");
+      player.play().catch(() => {});
+      player.setEqualizerPreset("rock");
+      player.openPanel("equalizer");
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+
+      const canvas = player.shadowRoot.querySelector(".lumen-spectrum canvas");
+      const hint = player.shadowRoot.querySelector(".lumen-spectrum-hint");
+      const context = canvas?.getContext("2d");
+      const pixels = context?.getImageData(0, 0, canvas.width, canvas.height).data;
+      // Any non-transparent pixel means bars were painted.
+      let painted = 0;
+      if (pixels) for (let i = 3; i < pixels.length; i += 4) if (pixels[i] > 0) painted++;
+
+      player.setEqualizerPreset("flat");
+      player.openPanel(null);
+      return { hasCanvas: !!canvas, hintHidden: !!hint?.hidden, painted };
+    });
+    check("the equalizer shows a spectrum", spectrum.hasCanvas && spectrum.hintHidden, `${spectrum.painted} pixels painted`);
+    check("the spectrum actually draws", spectrum.painted > 0);
+
+    const stopped = await page.evaluate(async () => {
+      const player = document.getElementById("player");
+      // Closing the panel must stop the animation rather than leave it
+      // running against a detached canvas.
+      player.openPanel("equalizer");
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      player.openPanel(null);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      return player.shadowRoot.querySelector(".lumen-spectrum") === null;
+    });
+    check("closing the panel tears the spectrum down", stopped);
+
     check("equalizer has a slider per band", dragged.count === 10, `${dragged.count} sliders`);
     check("dragging a band updates the state", dragged.band0 === 12);
     check("a hand-edited curve reads as custom", dragged.preset === null);
