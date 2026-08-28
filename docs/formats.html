@@ -27,8 +27,9 @@ extension at all, still routes correctly.</p>
   <tr><td><strong>MKV</strong></td><td>Remuxed to fMP4</td><td>No browser plays it natively. Embedded subtitles extracted too</td></tr>
   <tr><td><strong>FLV</strong></td><td>Remuxed to fMP4</td><td>Carries H.264/AAC directly</td></tr>
   <tr><td><strong>MPEG-TS</strong></td><td>hls.js transmuxer</td><td></td></tr>
+  <tr><td><strong>AVI</strong></td><td>Remuxed to fMP4</td><td>H.264 with MP3 or AAC. Annex B is re-framed as length-prefixed NAL units; MP3 timing comes from counting frames</td></tr>
   <tr><td><strong>Truncated MP4</strong></td><td>mp4box.js + MSE</td><td>Plays up to the damage</td></tr>
-  <tr><td>AVI, WMV/ASF, MPEG-PS</td><td>❌ Detected, not played</td><td>Reported as <code>CONTAINER_UNSUPPORTED</code></td></tr>
+  <tr><td>WMV/ASF, MPEG-PS</td><td>❌ Detected, not played</td><td>Reported as <code>CONTAINER_UNSUPPORTED</code></td></tr>
 </table>
 
 <h2>Containers vs codecs</h2>
@@ -45,7 +46,8 @@ than the rest of the player combined.</p>
   <tr><th>Source</th><th>Result</th></tr>
   <tr><td>H.264, HEVC, VP9, AV1 video</td><td>Remuxed and played</td></tr>
   <tr><td>AAC, Opus, FLAC, MP3 audio</td><td>Remuxed and played</td></tr>
-  <tr><td><strong>AC-3, DTS, TrueHD audio</strong></td><td>Audio dropped, <strong>video still plays</strong>, viewer told why</td></tr>
+  <tr><td><strong>AC-3, DTS, TrueHD, PCM audio</strong></td><td>Audio dropped, <strong>video still plays</strong>, viewer told why</td></tr>
+  <tr><td><strong>MPEG-4 ASP (DivX/Xvid), MJPEG, WMV</strong></td><td>Named in the error, so the container doesn't take the blame</td></tr>
   <tr><td>Undecodable video codec</td><td>Clear message naming the fix</td></tr>
 </table>
 <div class="note">
@@ -56,16 +58,29 @@ reason an MKV "won't play", and dropping one track beats refusing the file.
 <h2>Handling the unplayable</h2>
 <pre><code>player.on("error", ({ code, message }) =&gt; {
   if (code === "CONTAINER_UNSUPPORTED") {
-    // e.g. "AVI files can't be played in a browser.
-    //       Converting this to MP4 or WebM will fix it."
+    // e.g. "This AVI's video is MPEG-4 ASP (XVID), which no browser
+    //       can decode. Converting it to H.264 MP4 will fix it."
     offerServerSideTranscode(message);
   }
 });</code></pre>
 
+<h2>Why AVI is a codec problem, not a container problem</h2>
+<p>AVI is the format the web is usually told to give up on. The container
+itself is trivial — a flat list of length-prefixed chunks with the stream
+headers at the front — and Lumen parses it while it downloads. What is
+genuinely impossible is decoding what most AVIs carry: MPEG-4 ASP, which
+ships in no browser.</p>
+<p>Conflating those two is why "AVI doesn't work" became folklore. An AVI
+holding H.264 and MP3 or AAC — which every modern re-encode and every
+camera-to-AVI tool produces — is a container rewrite away from playing,
+and that is what Lumen does. An AVI holding Xvid gets an error that names
+Xvid.</p>
+
 <h2>Known limits</h2>
 <ul>
   <li>Seeking a remuxed MKV uses the file's Cues index. Files muxed without one fall back to seeking within buffered ranges.</li>
-  <li>AVI/WMV/FLV-with-VP6 are detected but not demuxed — their codecs are mostly undecodable in browsers anyway.</li>
+  <li>AVI covers H.264 video with MP3 or AAC audio; the container is parsed either way, but MPEG-4 ASP has no browser decoder. AVI seeking is limited to buffered ranges — the <code>idx1</code> index at the end of the file isn't used yet.</li>
+  <li>WMV/ASF and MPEG program streams are detected but not demuxed — their codecs are undecodable in browsers anyway.</li>
   <li>VP9-in-MKV synthesizes its <code>vpcC</code> with profile-0 / 8-bit / 4:2:0 defaults, since Matroska usually stores none.</li>
   <li>Bitmap subtitles (VOBSUB, PGS) in MKV are skipped; only text-based tracks become text tracks.</li>
 </ul>

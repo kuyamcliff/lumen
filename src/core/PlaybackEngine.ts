@@ -8,6 +8,7 @@ import { containerLabel, probeContainer, type ContainerKind } from "./containers
 import type { MatroskaRemuxEngine } from "../remux/MatroskaRemuxEngine";
 import type { DashEngine } from "./DashEngine";
 import type { FlvRemuxEngine } from "../remux/FlvRemuxEngine";
+import type { AviRemuxEngine } from "../remux/AviRemuxEngine";
 import type { DrmController } from "./DrmController";
 
 declare global {
@@ -48,6 +49,7 @@ const EXTENSION_TYPES: Array<[RegExp, LumenSourceType]> = [
   [/\.(ts|m2ts|mts)($|\?)/i, "ts"],
   [/\.mpd($|\?)/i, "dash"],
   [/\.flv($|\?)/i, "flv"],
+  [/\.avi($|\?)/i, "avi"],
 ];
 
 function detectType(source: LumenSource): LumenSourceType {
@@ -131,6 +133,7 @@ export class PlaybackEngine {
   private matroskaEngine: MatroskaRemuxEngine | null = null;
   private dashEngine: DashEngine | null = null;
   private flvEngine: FlvRemuxEngine | null = null;
+  private aviEngine: AviRemuxEngine | null = null;
   private triedResilient = false;
   private currentContainer: ContainerKind | null = null;
   /** Incremented on every load() so a slow async probe can't apply to a newer source. */
@@ -172,6 +175,43 @@ export class PlaybackEngine {
   /** True when an adaptive engine (HLS or DASH) is driving playback. */
   get isAdaptive(): boolean {
     return this._isHls || this.dashEngine !== null;
+  }
+
+  /**
+   * Which pipeline is actually playing, in the words the media-info panel
+   * shows. Worth surfacing: "why is this file behaving oddly" almost always
+   * starts with "which of the five paths is it on".
+   */
+  get engineName(): string {
+    if (this.hls) return "hls.js";
+    if (this.dashEngine) return "dash.js";
+    if (this.matroskaEngine) return "MKV remux";
+    if (this.flvEngine) return "FLV remux";
+    if (this.aviEngine) return "AVI remux";
+    if (this.resilientEngine) return "mp4box.js";
+    if (this._isHls) return "native HLS";
+    return "native";
+  }
+
+  /** The container the bytes turned out to be, once sniffed. */
+  get container(): ContainerKind | null {
+    return this.currentContainer;
+  }
+
+  /**
+   * The codecs the pipeline negotiated, where it knows them. Only the
+   * remux paths do — native playback keeps that to itself.
+   */
+  get codecs(): string | null {
+    const mime = this.matroskaEngine?.mimeType ?? this.flvEngine?.mimeType ?? this.aviEngine?.mimeType ?? null;
+    if (!mime) return null;
+    return mime.match(/codecs="([^"]+)"/)?.[1] ?? null;
+  }
+
+  /** Bitrate reported by an adaptive engine, in kbit/s. */
+  get reportedBitrateKbps(): number | null {
+    const bitrate = this.currentQuality?.bitrate;
+    return bitrate ? bitrate / 1000 : null;
   }
 
   setQuality(id: number | "auto"): void {
@@ -259,6 +299,7 @@ export class PlaybackEngine {
     this.teardownMatroska();
     this.teardownDash();
     this.teardownFlv();
+    this.teardownAvi();
     this._qualityLevels = [];
     this.retryAttempt = 0;
     this.triedResilient = false;
@@ -322,6 +363,10 @@ export class PlaybackEngine {
         await this.loadFlv(src, token);
         return;
 
+      case "avi":
+        await this.loadAvi(src, token);
+        return;
+
       case "iso-bmff":
       case "webm":
       case "ogg":
@@ -338,6 +383,27 @@ export class PlaybackEngine {
           `${containerLabel(container)} files can't be played in a browser. Converting this to MP4 or WebM will fix it.`,
         );
     }
+  }
+
+  /**
+   * Plays AVI by remuxing to fragmented MP4.
+   *
+   * The engine decides for itself whether the codecs inside are playable
+   * and reports precisely which one isn't, so the failure message names
+   * "MPEG-4 ASP (Xvid)" rather than blaming the container.
+   */
+  private async loadAvi(src: string, token: number): Promise<void> {
+    const { AviRemuxEngine } = await import("../remux/AviRemuxEngine");
+    if (this.destroyed || token !== this.loadToken) return;
+
+    const engine = new AviRemuxEngine(this.video, this.emitter);
+    this.aviEngine = engine;
+
+    const ok = await engine.attempt(src);
+    if (this.destroyed || token !== this.loadToken) return;
+    if (!ok) this.teardownAvi();
+    // The engine emits its own, specific error before returning false;
+    // adding a generic one on top would only bury it.
   }
 
   /** Plays FLV by remuxing to fragmented MP4 — Flash is gone, its files aren't. */
@@ -664,6 +730,11 @@ export class PlaybackEngine {
     this.flvEngine = null;
   }
 
+  private teardownAvi(): void {
+    this.aviEngine?.destroy();
+    this.aviEngine = null;
+  }
+
   destroy(): void {
     this.destroyed = true;
     this.video.removeEventListener("error", this.boundOnVideoError);
@@ -674,5 +745,6 @@ export class PlaybackEngine {
     this.teardownMatroska();
     this.teardownDash();
     this.teardownFlv();
+    this.teardownAvi();
   }
 }

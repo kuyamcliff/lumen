@@ -18,6 +18,7 @@ const PAGES = [
     group: "Guides",
     links: [
       ["streaming.html", "HLS &amp; DASH"],
+      ["effects.html", "Equalizer &amp; effects"],
       ["subtitles.html", "Subtitles &amp; chapters"],
       ["playlists.html", "Playlists"],
       ["theming.html", "Theming"],

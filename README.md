@@ -3,13 +3,17 @@
 **Beautiful. Simple. Unbreakable. Lightweight.**
 
 Lumen is a web-first, framework-agnostic video player built as a native
-Web Component. Drop in one tag and it plays **MP4, MOV, MKV, WebM, Ogg,
-FLV, MPEG-TS, HLS and DASH** — including formats no browser supports
-natively — with a premium default UI, deep subtitle customization, DRM,
-ads, and a clean TypeScript API, from a core bundle under **26 kB
-gzipped**.
+Web Component. Drop in one tag and it plays **MP4, MOV, MKV, AVI, WebM,
+Ogg, FLV, MPEG-TS, HLS and DASH** — including formats no browser supports
+natively — with a premium default UI, a ten-band equalizer, picture
+adjustments, A→B looping, snapshots, deep subtitle customization, DRM,
+ads, and a clean TypeScript API.
+
+It is, deliberately, the player VLC would be if it were a `<video>` tag.
 
 📖 **[Documentation](docs/index.html)** · 🎬 **[Live examples](examples/index.html)**
+
+![The player, with the equalizer panel open](docs/screenshots/02-panel-equalizer.png)
 
 ```html
 <script type="module" src="https://unpkg.com/@lumen/player/dist/lumen.js"></script>
@@ -40,11 +44,18 @@ import "@lumen/player";
   every browser's `<video>` element. Lumen identifies a file by its bytes
   and, where the container is the only obstacle, rebuilds it as fragmented
   MP4 in JavaScript — no transcoding, no WASM decoder, no quality loss.
-- **Tiny core.** ~26 kB gzipped with zero required runtime dependencies.
-  HLS (`hls.js`), DASH (`dashjs`), the corrupt-MP4 fallback (`mp4box`),
-  the MKV and FLV remuxers, the ads plugin and the framework wrappers are
-  all separate lazily-loaded chunks — pages that don't need them never
-  download them, and CI enforces the budget.
+- **Everything a desktop player has.** A ten-band equalizer with VLC's own
+  preset curves, volume boost past 100%, audio and subtitle sync, stereo
+  routing, a normalizer, brightness/contrast/saturation/hue/gamma, zoom,
+  rotation, aspect-ratio and crop control, A→B looping, frame stepping,
+  snapshots, bookmarks, resume-where-you-left-off, a media information
+  panel, and files opened by dropping them on the player.
+- **Small core, zero required dependencies.** ~40 kB gzipped for the whole
+  player. HLS (`hls.js`), DASH (`dashjs`), the corrupt-MP4 fallback
+  (`mp4box`), the MKV/FLV/AVI remuxers, the Web Audio graph, the side
+  panels, the subtitle converters, the ads plugin and the framework
+  wrappers are all separate lazily-loaded chunks — pages that don't need
+  them never download them, and CI enforces the budget.
 - **Beautiful by default.** A dark-first, premium control surface that needs
   zero configuration, plus a light theme and full CSS custom-property
   theming for everything else.
@@ -76,8 +87,9 @@ never the deciding factor.
 | **MPEG-TS** (`.ts`, `.m2ts`) | `hls.js` transmuxer | Reuses hls.js's TS support instead of duplicating a demuxer |
 | **DASH** (`.mpd`) | `dash.js` | ABR + quality menu |
 | **FLV** | Remuxed to fragmented MP4 | Carries H.264/AAC directly, so it's a copy |
+| **AVI** | Remuxed to fragmented MP4 | H.264 video with MP3 or AAC audio. Annex B is re-framed as length-prefixed NAL units; MP3 timing comes from counting frames, not the header |
 | **Truncated / corrupt MP4** | `mp4box.js` + MSE | See [Resilience](#resilience) |
-| **AVI, WMV/ASF, MPEG-PS** | ❌ Detected, not played | Reported as `CONTAINER_UNSUPPORTED` with a message telling the viewer what to do, instead of a blank player |
+| **WMV/ASF, MPEG-PS** | ❌ Detected, not played | Reported as `CONTAINER_UNSUPPORTED` with a message telling the viewer what to do, instead of a blank player |
 
 ### Remuxing, and what limits it
 
@@ -99,7 +111,8 @@ useful steps:
 | --- | --- |
 | H.264, HEVC, VP9, AV1 video | Remuxed and played (subject to browser/OS support) |
 | AAC, Opus, FLAC, MP3 audio | Remuxed and played |
-| **AC-3, DTS, TrueHD audio** | Audio track dropped, **video still plays**, viewer told why |
+| **AC-3, DTS, TrueHD, PCM audio** | Audio track dropped, **video still plays**, viewer told why |
+| **MPEG-4 ASP (DivX/Xvid), MJPEG, WMV** | Named in the error — "This AVI's video is MPEG-4 ASP (XVID), which no browser can decode" — instead of the container taking the blame |
 | Undecodable video codec | Clear message naming the fix, rather than a dead player |
 
 That AC-3 case matters more than it sounds: it's the single most common
@@ -141,6 +154,191 @@ and use the `CONTAINER_UNSUPPORTED` error to prompt for it.
 | Plugin architecture, ambient mode | ✅ |
 | Offline/PWA helpers (Cache API + range-aware service worker) | ✅ |
 | React, Vue and Svelte wrappers | ✅ |
+| AVI via built-in RIFF demuxer + fMP4 remuxer | ✅ |
+| Ten-band equalizer with VLC's eighteen preset curves | ✅ (see [The VLC toolkit](#the-vlc-toolkit)) |
+| Volume boost to 300%, audio delay, stereo routing, volume normalizer | ✅ |
+| Brightness, contrast, saturation, hue, gamma | ✅ |
+| Zoom, rotation, flips, forced aspect ratio, crop-to-fill | ✅ |
+| A→B looping, frame stepping, snapshots, bookmarks | ✅ |
+| Subtitle delay, and SRT / ASS / SSA / SubViewer / MicroDVD conversion | ✅ |
+| Open local files by drag-and-drop or file picker | ✅ |
+| Media information and live playback statistics | ✅ |
+| Resume where you left off, shuffle, repeat one/all | ✅ |
+
+## The VLC toolkit
+
+Everything below is in the player itself — no plugin, no configuration.
+Press <kbd>?</kbd> in any player for the full keyboard reference, or open
+`examples/effects.html` to try all of it.
+
+| Panel | Opens with | What's in it |
+| --- | --- | --- |
+| **Equalizer** | <kbd>q</kbd> | Ten bands, preamp, VLC's eighteen presets |
+| **Effects** | <kbd>x</kbd> | Audio (boost, delay, stereo mode, normalizer), Video (brightness, contrast, saturation, hue, gamma, zoom, rotation, flips, aspect ratio, fit), Captions (delay, size, background, edge, position) |
+| **Playlist** | <kbd>p</kbd> | The queue, repeat modes, shuffle, bookmarks, "open file" |
+| **Media information** | <kbd>i</kbd> | Container, pipeline, codecs, resolution, measured frame rate, bitrate, dropped frames, buffer health |
+| **Shortcuts** | <kbd>?</kbd> | Every binding |
+
+### Equalizer
+
+The ten centre frequencies (60 Hz … 16 kHz) and all eighteen preset curves
+are the ones VLC ships, running through Web Audio biquad filters — a
+shelf at each end, peaks in between, each band's Q derived from the
+geometric distance to its neighbours so the three crowded bands above
+12 kHz don't pile on top of each other.
+
+```js
+player.setEqualizerPreset("rock");
+player.audio.set({ preamp: -3, bands: [8, 4.8, -5.6, -8, -3.2, 4, 8.8, 11.2, 11.2, 11.2] });
+player.audio.effects; // the current state, including which preset it matches
+```
+
+One deliberate difference from VLC: VLC stores each preset's preamp on the
+0–20 scale it inherited from Winamp, where 12 means unity. Applying that
+literally in a browser would add +12 dB to a flat curve and clip
+everything, so Lumen re-bases those values against flat's 12 — the same
+relative relationship, at a level a browser can actually play.
+
+### Audio
+
+```js
+player.audio.set({
+  boost: 1.8,        // 100%–300%, past what video.volume allows
+  delayMs: 200,      // audio plays later, for a track that runs ahead
+  stereo: "mono",    // stereo | mono | left | right | swap
+  normalize: true,   // dynamic-range compression, VLC's volume normalizer
+});
+```
+
+The audio graph is built the first time an effect leaves its default, and
+not before: routing an element through Web Audio is permanent for the life
+of that element, costs an AudioContext, and breaks AirPlay handoff. It
+also **requires same-origin media or the `crossorigin` attribute** — Web
+Audio silently zeroes cross-origin audio that wasn't fetched with CORS, so
+Lumen checks first and reports `audioEffectsUnavailable` rather than
+muting the video. `player.audio.isAvailable` tells you up front.
+
+Audio delay only runs in one direction. A `DelayNode` can hold audio back;
+nothing can hold back a video element's own rendering, so "audio earlier
+than video" has no browser equivalent.
+
+### Picture
+
+```js
+player.setVideoFilters({ brightness: 1.2, contrast: 1.3, saturation: 0.15, hue: 20, gamma: 1.8 });
+player.filters.rotate();             // a quarter turn, as VLC's `r` does
+player.filters.cycleAspectRatio();   // source → 16/9 → 4/3 → 1/1 → …
+player.filters.cycleZoom();          // 25% → 50% → 100% → 200% → 400%
+player.setVideoFilters({ fit: "fill", flipHorizontal: true });
+```
+
+All of it is a CSS `filter` and `transform` on the video element, so it
+costs nothing until a control moves, runs on the GPU, and never touches
+the decoded frames. Gamma is the one adjustment CSS has no primitive for,
+so it goes through a small inline SVG `feComponentTransfer` filter that is
+only referenced while gamma is off its default.
+
+### Looping, stepping, snapshots, bookmarks
+
+```js
+player.cycleAbLoop();                  // A, then B, then clear
+player.setAbLoop({ start: 12, end: 18 });
+player.abLoop;                         // { start, end } | null
+
+player.stepFrame(1);                   // and -1 to step back
+player.frameRate;                      // measured, not guessed — null until known
+
+await player.saveSnapshot();           // downloads a PNG of the current frame
+const blob = await player.snapshot({ type: "image/jpeg", quality: 0.9, width: 1280 });
+
+player.addBookmark("The good bit");
+player.bookmarks;                      // [{ time, label }], pinned to the scrub bar
+player.removeBookmark(time);
+```
+
+Snapshots re-apply Lumen's own colour adjustments to the canvas, so the
+saved image matches the picture on screen rather than what the decoder
+produced. Cross-origin media without CORS can't be read back at all, and
+that case is reported as such instead of saving a blank frame.
+
+### Local files
+
+```js
+player.openFiles(fileList);   // videos become the queue; subtitles attach
+player.openFile(file);
+await player.addSubtitleFile(srtFile);
+```
+
+Drag a video onto the player, or press <kbd>o</kbd>. Subtitles in **SRT,
+ASS/SSA, SubViewer and MicroDVD** are converted to WebVTT in the browser —
+the only format `<track>` accepts — so dropping a movie and its `.srt`
+together does the obvious thing. Dropping several videos builds a playlist
+in natural filename order, so a season folder queues up as episodes 1, 2,
+… 10 rather than 1, 10, 2.
+
+![Dropping a file onto the player](docs/screenshots/05-drop.png)
+
+### Media information
+
+```js
+player.mediaInfo();
+// { container: "Matroska (MKV)", engine: "MKV remux", codecs: "vp09.00.21.08,opus",
+//   width: 640, height: 360, frameRate: 60.02, duration: 16.2, bitrateKbps: null,
+//   droppedFrames: 3, decodedFrames: 334, bufferAheadSeconds: 10.8, … }
+```
+
+Frame rate is measured from `requestVideoFrameCallback` — the presentation
+time of frames the compositor actually showed — because a remuxed stream's
+container may carry no frame-rate field at all.
+
+![The media information panel](docs/screenshots/02-panel-info.png)
+
+### Resume, repeat and shuffle
+
+```js
+player.repeat = "all";   // "off" | "one" | "all"
+player.shuffle = true;
+```
+
+Playback position is remembered per file and restored on the next visit,
+keyed on the URL with its query string stripped so an expiring signed CDN
+link still matches. Positions under 30 seconds and within 20 seconds of the
+end are ignored, so it never hijacks a file that barely started or already
+finished. `resume="off"` on the element turns it off entirely.
+
+## Keyboard
+
+Where a VLC binding and a web-player binding disagree, the web one wins:
+<kbd>j</kbd>/<kbd>l</kbd> have meant "seek ten seconds" to anyone who
+watches video in a browser for a decade, and breaking that to match a
+desktop app would cost more than it gained. Everything VLC binds that the
+web has no opinion about is kept exactly as VLC has it.
+
+| Keys | Action |
+| --- | --- |
+| <kbd>Space</kbd> <kbd>k</kbd> | Play/pause |
+| <kbd>←</kbd> <kbd>→</kbd> | Seek ±5 s |
+| <kbd>j</kbd> <kbd>l</kbd> | Seek ±10 s |
+| <kbd>↑</kbd> <kbd>↓</kbd> | Volume |
+| <kbd>m</kbd> / <kbd>f</kbd> / <kbd>c</kbd> | Mute / fullscreen / captions |
+| <kbd>&lt;</kbd> <kbd>&gt;</kbd> | Playback speed |
+| <kbd>e</kbd> / <kbd>Shift</kbd>+<kbd>e</kbd> | Step one frame forward / back |
+| <kbd>g</kbd> <kbd>h</kbd> | Subtitle delay ∓50 ms |
+| <kbd>Shift</kbd>+<kbd>g</kbd> / <kbd>Shift</kbd>+<kbd>h</kbd> | Audio delay ∓50 ms |
+| <kbd>a</kbd> / <kbd>z</kbd> / <kbd>r</kbd> | Cycle aspect ratio / zoom / rotation |
+| <kbd>v</kbd> / <kbd>b</kbd> | Cycle subtitle track / audio track |
+| <kbd>Shift</kbd>+<kbd>a</kbd> | A→B loop |
+| <kbd>Shift</kbd>+<kbd>b</kbd> | Add a bookmark |
+| <kbd>s</kbd> | Snapshot |
+| <kbd>n</kbd> / <kbd>Shift</kbd>+<kbd>n</kbd> | Next / previous item |
+| <kbd>Shift</kbd>+<kbd>r</kbd> / <kbd>Shift</kbd>+<kbd>l</kbd> | Shuffle / repeat mode |
+| <kbd>q</kbd> <kbd>x</kbd> <kbd>p</kbd> <kbd>i</kbd> | Equalizer, effects, playlist, media info |
+| <kbd>o</kbd> | Open a file |
+| <kbd>?</kbd> | Every shortcut, in the player |
+| <kbd>0</kbd>–<kbd>9</kbd> | Seek to 0%–90% |
+| <kbd>Esc</kbd> | Close the open menu or panel |
+
+![The keyboard shortcut panel](docs/screenshots/02-panel-shortcuts.png)
 
 ## Quick start
 
@@ -165,9 +363,10 @@ the browser can play it):
 ```
 
 See `examples/` for runnable pages: `basic.html`, `hls.html`,
-`subtitles.html`, `theming.html`, `formats.html`, `resilience.html`,
-`playlist.html`, `i18n.html` — or open `examples/index.html` for an index
-of all of them. Run `npm run dev` and open it from the printed local URL.
+`subtitles.html`, `theming.html`, `formats.html`, `effects.html`,
+`resilience.html`, `playlist.html`, `i18n.html` — or open
+`examples/index.html` for an index of all of them. Run `npm run dev` and
+open it from the printed local URL.
 
 > `resilience.html` needs a real H.264/AAC-capable browser (regular Chrome,
 > Edge, Firefox, Safari). Minimal open-source Chromium builds — including
@@ -227,6 +426,43 @@ player.previous();
 player.playItem(1);
 player.playlistIndex;
 
+// Audio effects — see "The VLC toolkit" above
+player.audio;                            // AudioController
+player.audioEffects;                     // current state
+player.setEqualizerPreset("rock");
+player.setAudioEffects({ boost: 1.5, delayMs: 120, stereo: "mono", normalize: true });
+
+// Picture adjustments and geometry
+player.filters;                          // VideoFilters
+player.videoFilterState;
+player.setVideoFilters({ brightness: 1.2, gamma: 1.6, zoom: 1.5, rotation: 90 });
+
+// Looping, stepping, snapshots, bookmarks
+player.cycleAbLoop();
+player.setAbLoop({ start: 12, end: 18 });
+player.abLoop;
+player.stepFrame(1);
+player.frameRate;
+await player.saveSnapshot();
+player.addBookmark("The good bit");
+player.bookmarks;
+
+// Playback memory and queue behaviour
+player.repeat = "all";                   // "off" | "one" | "all"
+player.shuffle = true;
+
+// Subtitle timing, and files from the viewer's machine
+player.subtitleOffset = 0.5;             // seconds; positive shows cues later
+await player.openFiles(files);
+await player.addSubtitleFile(srtFile);   // SRT, ASS/SSA, SubViewer, MicroDVD
+
+// Panels
+player.openPanel("equalizer");           // "playlist" | "equalizer" | "effects" | "info" | "shortcuts" | null
+player.panel;
+
+// What is playing, and how well
+player.mediaInfo();
+
 // Casting (AirPlay / Remote Playback)
 player.isCastAvailable;
 await player.requestCast();
@@ -253,9 +489,12 @@ player.destroy(); // tear down engine + listeners
 `qualitychange`, `qualitieschange`, `texttrackchange`,
 `embeddedtexttrack`, `chapterschange`, `chapterchange`,
 `audiotrackschange`, `audiotrackchange`, `playlistchange`,
-`playlistitemchange`, `castavailabilitychange`, `enterfullscreen`,
-`exitfullscreen`, `enterpip`, `leavepip`, `loadedmetadata`, `ready`,
-`destroy`. Full payload types are in `src/types.ts`.
+`playlistitemchange`, `castavailabilitychange`, `abloopchange`,
+`videofilterchange`, `audioeffectchange`, `bookmarkschange`, `snapshot`,
+`repeatchange`, `shufflechange`, `panelchange`, `resume`,
+`enterfullscreen`, `exitfullscreen`, `enterpip`, `leavepip`,
+`loadedmetadata`, `ready`, `destroy`. Full payload types are in
+`src/types.ts`.
 
 ### Attributes
 
@@ -263,7 +502,8 @@ player.destroy(); // tear down engine + listeners
 `theme` (`dark` | `light` | `system`), `aspect-ratio` (e.g. `16/9`),
 `object-fit` (e.g. `contain` | `cover`), `thumbnails` (URL to a WebVTT
 sprite sheet, the format used by Mux/Bunny/Vimeo-style scrub previews),
-`chapters` (URL to a WebVTT chapters file).
+`chapters` (URL to a WebVTT chapters file), `resume` (set to `off` to stop
+remembering playback positions for this player).
 
 ### Internationalization
 
@@ -371,27 +611,62 @@ src/
   remux/                   ← lazy-loaded; absent from the core bundle
     MseSink.ts             shared MediaSource + SourceBuffer queueing
     MatroskaRemuxEngine.ts MKV demux → fMP4 mux → MSE, track selection
+    FlvRemuxEngine.ts      FLV demux → fMP4 mux → MSE
+    AviRemuxEngine.ts      AVI demux → fMP4 mux → MSE
     matroska/
       ebml.ts              EBML variable-length integers + element IDs
       MatroskaDemuxer.ts   streaming Matroska parser
+    avi/
+      AviDemuxer.ts        streaming RIFF/AVI parser
+      h264.ts              Annex B ⇄ length-prefixed NAL framing, avcC
+      mp3.ts               MPEG audio frame headers, for exact audio timing
     mp4/
       boxes.ts             ISO-BMFF box-writing primitives
       Mp4Muxer.ts          fMP4 init + media segment generation
       sampleEntries.ts     codec → sample entry + RFC 6381 codec string
+  audio/
+    presets.ts             VLC's ten frequencies and eighteen preset curves
+    AudioController.ts     effect state, persistence, availability checks
+    AudioGraph.ts          ← lazy-loaded; the Web Audio nodes themselves
+  video/
+    VideoFilters.ts        CSS filter/transform layer + the SVG gamma filter
   media/
     ChapterManager.ts      WebVTT chapters, markers, jump targets
     CastController.ts      AirPlay + Remote Playback availability
+    LoopController.ts      A→B looping
+    PositionMemory.ts      resume points and bookmarks, per file
+    MediaInfo.ts           ← lazy-loaded; frame-rate and bitrate sampling
+    Snapshot.ts            ← lazy-loaded; frame capture and encoding
+    files.ts               ← lazy-loaded; classifying dropped files
   subtitles/
     SubtitleManager.ts     track discovery, switching, styling, persistence
+    convert.ts             ← lazy-loaded; SRT/ASS/SubViewer/MicroDVD → WebVTT
   i18n.ts                  every user-visible string, with fallbacks
   ui/
     template.ts             shadow-DOM shell
     ControlsController.ts   all interaction wiring (the biggest module)
+    PlayerBridge.ts         what the UI needs from the player, as an interface
+    panels/                 ← lazy-loaded; the side panels and their CSS
     icons.ts, Thumbnails.ts
   styles/player.css        design tokens + component styles (inlined into JS)
   LumenPlayer.ts            the <lumen-player> custom element + public API
   index.ts                  registers the element, re-exports types
 ```
+
+### What's in the core, and what isn't
+
+The core is everything a page downloads just to show a player: routing for
+every supported container, the whole control surface, the effects *state*
+layer (which is what the synchronous API reads), resume memory and A→B
+looping. `npm run size` prints it and CI fails if it grows past the
+budget.
+
+Everything a viewer has to ask for is behind a dynamic `import()` and
+builds as its own chunk: each remuxer, the DASH engine, the Web Audio
+graph, the side panels and their stylesheet, the subtitle converters, the
+snapshot encoder, the statistics sampler, the file classifier, the ads
+plugin and the framework wrappers. A page that plays one MP4 downloads
+none of it.
 
 `src/remux/` is reached only through a dynamic `import()`, so it builds as
 a separate chunk and a page that never opens an MKV never downloads it.
@@ -412,7 +687,18 @@ npm test           # vitest
 npm run typecheck
 npm run build       # emits dist/lumen.js (ESM), dist/lumen.umd.cjs, dist/types
 npm run size         # build + enforce the gzip budget
+npm run test:browser # real-Chromium smoke suite over every example page
+SHOTS=1 npm run test:browser   # …and write docs/screenshots/*.png
 ```
+
+`test:browser` drives real Chromium through every example page and asserts
+the things only a real media pipeline can tell us: that an MKV is decoding
+frames, that the equalizer engages a Web Audio graph, that a rotation
+reaches the compositor, that a snapshot encodes a real image. Playwright's
+Chromium ships without the H.264/AAC decoders, so the AVI checks assert
+the routing and the negotiated codec string, and — where the decoders are
+missing — that the failure names the codec rather than the container. Set
+`LUMEN_CHROMIUM` to use a specific browser binary.
 
 ## Roadmap
 
@@ -421,9 +707,15 @@ Everything in the PRD is built. What remains is genuinely optional:
 - **Visual-regression tests and a real-device matrix.** CI runs unit tests
   plus a real-Chromium smoke suite; screenshot diffing and a device farm
   would go further.
-- **WASM soft-decoding** for codecs no browser ships (DivX, MPEG-2, AC-3).
-  Deliberately not done: a decoder would cost more bytes than the entire
-  player, so those files are detected and reported instead.
+- **WASM soft-decoding** for codecs no browser ships (DivX/Xvid, MPEG-2,
+  AC-3). Deliberately not done: a decoder would cost more bytes than the
+  entire player, so those files are detected and reported by name instead.
+- **A seek index for AVI.** The `idx1` table at the end of the file would
+  give exact random access; today seeking a streamed AVI is limited to
+  buffered ranges, as it is for a Cues-less MKV.
+- **A spectrum visualiser.** The analyser node is already in the audio
+  graph and `player.audio.getFrequencyData()` exposes it; nothing draws it
+  yet.
 - **Bitmap subtitles** (VOBSUB, PGS) in MKV need an image-rendering path;
   only text-based tracks become text tracks today.
 - **A native core with language bindings**, per the PRD's long-term
@@ -439,6 +731,23 @@ Everything in the PRD is built. What remains is genuinely optional:
   defaults, since Matroska usually stores no CodecPrivate for VP9.
 - The ads plugin covers linear VAST only — no VPAID (it executes
   third-party code in your page), companions, or non-linear overlays.
+- **AVI covers H.264 video with MP3 or AAC audio.** The container is fully
+  parsed either way, but MPEG-4 ASP (DivX/Xvid) — which is what most
+  older AVIs carry — has no browser decoder, so those files are named and
+  refused rather than played. AVI also has no seek index in the streaming
+  path yet: seeking works within what has been buffered.
+- **Audio effects need same-origin media or `crossorigin`.** Web Audio
+  silently zeroes cross-origin audio fetched without CORS, so Lumen
+  refuses to route it rather than muting the video. Engaging the graph
+  also ends AirPlay/Remote Playback handoff for that element, which is
+  why it only happens when an effect is actually used.
+- **Audio delay is positive-only.** A `DelayNode` can hold audio back;
+  nothing can delay a video element's own rendering.
+- Rotating the picture scales it to fit the player box rather than
+  reshaping the box, so a quarter-turned 16:9 video is letterboxed on the
+  sides. That matches what VLC does in a fixed window.
+- Bitmap subtitle formats (VOBSUB, PGS) are still not converted — the
+  text formats (SRT, ASS/SSA, SubViewer, MicroDVD) are.
 
 ## License
 

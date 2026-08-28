@@ -13,13 +13,14 @@
         <h1>Lumen</h1>
         <p class="lede">
           A web-first video player built as a native Web Component. One tag
-          plays MP4, MOV, MKV, WebM, Ogg, FLV, MPEG-TS, HLS and DASH —
-          including formats no browser supports on its own — from a core
-          under 26&nbsp;kB gzipped.
+          plays MP4, MOV, MKV, AVI, WebM, Ogg, FLV, MPEG-TS, HLS and DASH —
+          including formats no browser supports on its own — with a
+          ten-band equalizer, picture adjustments, A→B looping and
+          snapshots built in.
         </p>
 
         <div class="pills">
-          <span class="pill"><strong>26 kB</strong> core, gzipped</span>
+          <span class="pill"><strong>~40 kB</strong> core, gzipped</span>
           <span class="pill"><strong>0</strong> required dependencies</span>
           <span class="pill"><strong>MIT</strong> licensed</span>
           <span class="pill">Works in <strong>any</strong> framework</span>
@@ -33,6 +34,11 @@
           That's the whole integration. No configuration, no build step, no
           framework — and the file above is a Matroska file, which no
           browser can play by itself.
+        </p>
+
+        <p>
+          <img src="./screenshots/01-player.png" alt="The Lumen player"
+               style="width:100%;border-radius:12px;margin:24px 0" />
         </p>
 
         <h2>What makes it different</h2>
@@ -59,12 +65,28 @@
           a human can act on, never a raw <code>MediaError</code>.
         </p>
 
+        <h3>It has the controls a desktop player has</h3>
+        <p>
+          A ten-band equalizer with VLC's own preset curves, volume boost
+          past 100%, audio and subtitle sync, brightness, contrast,
+          saturation, hue and gamma, zoom and rotation, A→B looping, frame
+          stepping, snapshots, bookmarks, resume-where-you-left-off, and a
+          media information panel — in the player itself, with no plugin.
+        </p>
+        <p>
+          <img src="./screenshots/02-panel-equalizer.png"
+               alt="The equalizer panel, with ten faders and VLC's presets"
+               style="width:100%;border-radius:12px;margin:16px 0" />
+        </p>
+        <p><a href="effects.html">Read about the equalizer and effects →</a></p>
+
         <h3>It stays small</h3>
         <p>
-          Every heavy capability — the MKV and FLV remuxers, the HLS and
-          DASH engines, ads, the framework wrappers — is a separate chunk
-          loaded on demand. A page that shows an MP4 downloads the MP4
-          player, and nothing else. The size budget is enforced in CI.
+          Every heavy capability — the MKV, FLV and AVI remuxers, the HLS
+          and DASH engines, the Web Audio graph, the side panels, the
+          subtitle converters, ads, the framework wrappers — is a separate
+          chunk loaded on demand. A page that shows an MP4 downloads the
+          MP4 player, and nothing else. The size budget is enforced in CI.
         </p>
 
         <h3>It's a real Web Component</h3>

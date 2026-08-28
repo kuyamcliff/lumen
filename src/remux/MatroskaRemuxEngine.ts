@@ -55,10 +55,16 @@ export class MatroskaRemuxEngine {
   private seeking = false;
   private abortController: AbortController | null = null;
   private boundOnSeeking = () => this.onSeeking();
+  private _mimeType: string | null = null;
 
   constructor(video: HTMLVideoElement, emitter: EventEmitter) {
     this.video = video;
     this.emitter = emitter;
+  }
+
+  /** The MediaSource MIME the browser accepted, for the media-info panel. */
+  get mimeType(): string | null {
+    return this._mimeType;
   }
 
   get audioTracks(): LumenAudioTrack[] {
@@ -347,6 +353,7 @@ export class MatroskaRemuxEngine {
     }
 
     const mime = buildMimeType(selected.map((t) => t.mux));
+    this._mimeType = mime;
     const sink = new MseSink(this.video, (message) => this.emitFatal(message));
     this.sink = sink;
 

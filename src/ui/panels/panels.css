@@ -1,0 +1,329 @@
+/*
+ * Styles for the side panels.
+ *
+ * These ship with the panel module rather than the player's own
+ * stylesheet: they're a third of the CSS and none of it is on screen
+ * until someone opens a panel, so PanelController injects them into the
+ * shadow root the first time it is constructed.
+ */
+
+/* ---------- side panel (playlist / equalizer / effects / info) ---------- */
+.lumen-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  width: min(340px, 82%);
+  display: flex;
+  flex-direction: column;
+  background: var(--lumen-color-surface-strong);
+  border-left: 1px solid var(--lumen-color-border);
+  box-shadow: var(--lumen-shadow-controls);
+  backdrop-filter: blur(16px);
+  animation: lumen-panel-in var(--lumen-transition-medium) ease;
+}
+.lumen-panel[hidden] {
+  display: none;
+}
+@keyframes lumen-panel-in {
+  from {
+    transform: translateX(12px);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lumen-panel {
+    animation: none;
+  }
+}
+
+.lumen-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lumen-space-2);
+  padding: var(--lumen-space-2) var(--lumen-space-2) var(--lumen-space-2) var(--lumen-space-4);
+  border-bottom: 1px solid var(--lumen-color-border);
+  flex: none;
+}
+.lumen-panel-title {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--lumen-color-text);
+}
+.lumen-panel-close {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  min-height: 36px;
+}
+.lumen-panel-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--lumen-space-3) var(--lumen-space-4) var(--lumen-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--lumen-space-3);
+}
+
+/* Tabs across the top of a panel that hosts more than one view. */
+.lumen-tabs {
+  display: flex;
+  gap: var(--lumen-space-1);
+  flex: none;
+}
+.lumen-tab {
+  all: unset;
+  box-sizing: border-box;
+  flex: 1 1 0;
+  text-align: center;
+  padding: 6px 8px;
+  border-radius: var(--lumen-radius-sm);
+  font-size: 0.78rem;
+  color: var(--lumen-color-text-muted);
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.lumen-tab:hover {
+  background: rgba(127, 127, 127, 0.16);
+}
+.lumen-tab[aria-selected="true"] {
+  color: var(--lumen-color-text);
+  border-color: var(--lumen-color-border);
+  background: rgba(127, 127, 127, 0.14);
+}
+.lumen-tab:focus-visible {
+  box-shadow: var(--lumen-focus-ring);
+}
+
+/* A labelled slider row, the building block of the effects panel. */
+.lumen-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.lumen-field-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--lumen-space-2);
+  font-size: 0.8rem;
+  color: var(--lumen-color-text);
+}
+.lumen-field-value {
+  color: var(--lumen-color-text-muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.75rem;
+}
+.lumen-field input[type="range"] {
+  width: 100%;
+}
+
+.lumen-panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lumen-space-2);
+}
+.lumen-panel-section > h3 {
+  margin: 0;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--lumen-color-text-muted);
+  font-weight: 600;
+}
+
+.lumen-panel select,
+.lumen-panel button.lumen-chip {
+  white-space: nowrap;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--lumen-color-text);
+  background: rgba(127, 127, 127, 0.16);
+  border: 1px solid var(--lumen-color-border);
+  border-radius: var(--lumen-radius-sm);
+  padding: 6px 8px;
+  cursor: pointer;
+}
+.lumen-panel select:focus-visible,
+.lumen-panel button.lumen-chip:focus-visible {
+  outline: none;
+  box-shadow: var(--lumen-focus-ring);
+}
+.lumen-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lumen-space-1);
+}
+button.lumen-chip[aria-pressed="true"] {
+  background: var(--lumen-color-accent);
+  color: var(--lumen-color-accent-contrast);
+  border-color: transparent;
+}
+
+/* ---------- equalizer ---------- */
+.lumen-eq {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 2px;
+  height: 150px;
+  padding: var(--lumen-space-2) 0;
+}
+.lumen-eq-band {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 0;
+  min-width: 0;
+}
+/*
+ * A vertical fader.
+ *
+ * `writing-mode: vertical-lr` is the modern way to stand a range input on
+ * end, but it only reorients the *native* widget — the custom track and
+ * thumb this player draws stay horizontal, leaving a 4px sliver where the
+ * fader should be. Rotating a normal horizontal input inside a fixed slot
+ * keeps the same styling and works in every browser.
+ */
+.lumen-eq-slot {
+  width: 22px;
+  height: 110px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.lumen-eq-band input[type="range"] {
+  width: 110px;
+  flex: none;
+  transform: rotate(-90deg);
+}
+.lumen-eq-band label {
+  font-size: 0.6rem;
+  color: var(--lumen-color-text-muted);
+  white-space: nowrap;
+}
+.lumen-eq-band .lumen-eq-gain {
+  font-size: 0.6rem;
+  color: var(--lumen-color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- playlist ---------- */
+.lumen-playlist {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.lumen-playlist-item {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--lumen-space-2);
+  padding: var(--lumen-space-2);
+  border-radius: var(--lumen-radius-sm);
+  font-size: 0.85rem;
+  color: var(--lumen-color-text);
+  cursor: pointer;
+}
+.lumen-playlist-item:hover {
+  background: rgba(127, 127, 127, 0.18);
+}
+.lumen-playlist-item:focus-visible {
+  box-shadow: var(--lumen-focus-ring);
+}
+.lumen-playlist-item[aria-current="true"] {
+  background: rgba(127, 127, 127, 0.22);
+  font-weight: 600;
+}
+.lumen-playlist-index {
+  color: var(--lumen-color-text-muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.75rem;
+  min-width: 1.5em;
+}
+.lumen-playlist-label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- media information ---------- */
+.lumen-info-grid {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: 4px var(--lumen-space-3);
+  font-size: 0.8rem;
+}
+.lumen-info-grid dt {
+  color: var(--lumen-color-text-muted);
+}
+.lumen-info-grid dd {
+  margin: 0;
+  color: var(--lumen-color-text);
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- keyboard shortcut list ---------- */
+.lumen-shortcuts {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: 6px var(--lumen-space-3);
+  font-size: 0.8rem;
+  align-items: baseline;
+}
+.lumen-shortcuts kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--lumen-color-border);
+  background: rgba(127, 127, 127, 0.16);
+  color: var(--lumen-color-text);
+  white-space: nowrap;
+}
+.lumen-shortcuts span {
+  color: var(--lumen-color-text-muted);
+}
+
+/*
+ * While a panel is open the video area narrows to what's left of it, so
+ * captions and the control row stay fully visible instead of running
+ * underneath the drawer.
+ */
+.lumen.has-panel .lumen-captions,
+.lumen.has-panel .lumen-controls {
+  right: min(340px, 82%);
+}
+.lumen.has-panel .lumen-controls {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+}
+/* The narrower row can't fit the clock as well as every button, and a
+   button that falls off the end is worse than a time readout that steps
+   aside — the scrub bar still shows the position. */
+.lumen.has-panel .lumen-time {
+  display: none;
+}
+
+/* The panel takes the full width on a phone, where 340px is most of it —
+   there is no room to keep the controls beside it, so they stay put and
+   the panel simply covers them. */
+@media (max-width: 480px) {
+  .lumen-panel {
+    width: 100%;
+    border-left: none;
+  }
+  .lumen.has-panel .lumen-captions,
+  .lumen.has-panel .lumen-controls {
+    right: 0;
+  }
+}

@@ -81,13 +81,13 @@ describe("sniffContainer", () => {
 
 describe("isPlayableContainer", () => {
   it("accepts everything Lumen can play natively or by remuxing", () => {
-    for (const kind of ["iso-bmff", "matroska", "webm", "ogg", "mpeg-ts", "flv"] as const) {
+    for (const kind of ["iso-bmff", "matroska", "webm", "ogg", "mpeg-ts", "flv", "avi"] as const) {
       expect(isPlayableContainer(kind), kind).toBe(true);
     }
   });
 
-  it("rejects containers that need transcoding", () => {
-    for (const kind of ["avi", "asf", "mpeg-ps"] as const) {
+  it("rejects containers with no browser-side path at all", () => {
+    for (const kind of ["asf", "mpeg-ps"] as const) {
       expect(isPlayableContainer(kind), kind).toBe(false);
     }
   });

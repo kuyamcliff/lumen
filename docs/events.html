@@ -55,6 +55,20 @@ returns an unsubscribe function. Every payload is fully typed.</p>
   <tr><td><code>enterfullscreen</code>, <code>exitfullscreen</code></td><td>—</td></tr>
   <tr><td><code>enterpip</code>, <code>leavepip</code></td><td>—</td></tr>
   <tr><td><code>castavailabilitychange</code></td><td><code>{ available }</code></td></tr>
+  <tr><td><code>panelchange</code></td><td><code>{ panel }</code> — which side panel is open, or null</td></tr>
+</table>
+
+<h2>Effects &amp; playback memory</h2>
+<table>
+  <tr><th>Event</th><th>Payload</th></tr>
+  <tr><td><code>audioeffectchange</code></td><td><code>{ effects }</code> — equalizer, boost, delay, stereo, normalizer</td></tr>
+  <tr><td><code>videofilterchange</code></td><td><code>{ filters }</code> — brightness, gamma, zoom, rotation, …</td></tr>
+  <tr><td><code>abloopchange</code></td><td><code>{ loop }</code> — <code>{ start, end }</code> or null</td></tr>
+  <tr><td><code>bookmarkschange</code></td><td><code>{ bookmarks }</code></td></tr>
+  <tr><td><code>snapshot</code></td><td><code>{ blob, filename }</code> — fired before the download starts</td></tr>
+  <tr><td><code>repeatchange</code></td><td><code>{ mode }</code></td></tr>
+  <tr><td><code>shufflechange</code></td><td><code>{ shuffle }</code></td></tr>
+  <tr><td><code>resume</code></td><td><code>{ position }</code> — playback restored to a remembered point</td></tr>
 </table>
 
 <h2>Errors</h2>

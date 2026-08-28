@@ -32,10 +32,16 @@ export class FlvRemuxEngine {
   private started = false;
   private destroyed = false;
   private streamEnded = false;
+  private _mimeType: string | null = null;
 
   constructor(video: HTMLVideoElement, emitter: EventEmitter) {
     this.video = video;
     this.emitter = emitter;
+  }
+
+  /** The MediaSource MIME the browser accepted, for the media-info panel. */
+  get mimeType(): string | null {
+    return this._mimeType;
   }
 
   async attempt(url: string): Promise<boolean> {
@@ -159,6 +165,7 @@ export class FlvRemuxEngine {
     }
 
     const mime = buildMimeType(muxTracks);
+    this._mimeType = mime;
     if (!MseSink.isSupported(mime)) {
       this.emitFatal("This FLV uses a codec your browser can't play.");
       return false;
